@@ -10,18 +10,63 @@ It cannot approve reviews, accept or reject comments, create or assign tasks, or
 
 Tasks an agent closes are recorded and shown as **agent-closed** (a dashed violet badge) until a human reviews the closure. When you close a task, leave a note saying what you did and how you verified it. When there is something visual to check, submit a review kit with `--task` instead; that moves the task to `in_review` for a human.
 
-## Install
+## Setting up an agent
+
+### 1. Create an enrollment key (human, once)
+
+In Rev, open **My agents → New enrollment key** and set:
+
+| Setting | Meaning |
+| --- | --- |
+| Name | What the key is for, e.g. "Build machines" |
+| Projects | Projects every new agent joins, as member or viewer. Only projects where you are an owner or member are offered. |
+| Max registrations | How many agents may register with it (empty means unlimited) |
+| Expires | 1 day up to never |
+
+The key (`rev_enroll_…`) is shown once. Store it like a password; for example `bao kv put -mount=secret rev enroll_key=…`. Every agent registered with it is linked to you, appears under **My agents** with a "self-registered" badge, and has its own token. Revoking a key stops new registrations. Tick "also disable agents" to cut off every agent enrolled with it, e.g. if the key leaked.
+
+### 2a. Claude Code: the Rev plugin
+
+```text
+/plugin marketplace add vibotaku/Rev
+/plugin install rev@vibotaku
+/rev:setup https://rev.example.com rev_enroll_…
+```
+
+Instead of pasting the key, `/rev:setup https://rev.example.com bao:rev#enroll_key` makes Claude pipe it from OpenBao/Vault, so it never appears in the transcript. Claude checks Node.js, registers the machine (`<user>@<host>` by default, or ask for a name), saves the token to `~/.config/rev/config.json`, and verifies the connection.
+
+The plugin provides:
+
+- **MCP server `rev`.** It works immediately after setup, with no restart. Before setup, its tools explain how to set up.
+- **`/rev:workflow` skill.** How to pull tasks, read annotated feedback, capture screenshots and recordings, submit review kits, and when it's OK to close a task.
+- **The bundled CLI** at `${CLAUDE_PLUGIN_ROOT}/cli/rev.mjs`.
+
+To update: `/plugin` → Installed → rev → **Update now**.
+
+### 2b. Any other agent, CI job or script
 
 The CLI is a single Node.js (20+) file served by every Rev instance:
 
 ```bash
 mkdir -p ~/.local/bin
 curl -fsSL https://rev.example.com/downloads/rev.mjs -o ~/.local/bin/rev && chmod +x ~/.local/bin/rev
-rev login --url https://rev.example.com --token rev_…   # saved to ~/.config/rev/config.json (mode 0600)
+
+# Self-register (key from an env var, a flag, or stdin):
+REV_ENROLL_KEY=rev_enroll_… rev register --url https://rev.example.com --name build-01
+bao kv get -mount=secret -field=enroll_key rev | rev register --url https://rev.example.com --key -
+
 rev whoami
 ```
 
-`REV_URL` and `REV_TOKEN` override the config file. That's useful in CI and containers. `REV_CONFIG` points at a different config file.
+`rev register` refuses to overwrite an existing setup unless you pass `--force`. Agent names must be unique among the linked human's agents.
+
+For MCP clients other than Claude Code, configure a stdio server that runs `rev mcp` (for example `"command": "rev", "args": ["mcp"]`). For agents that read instruction files (`AGENTS.md`, Cursor rules, …), include the contents of [`plugins/rev/skills/workflow/SKILL.md`](../plugins/rev/skills/workflow/SKILL.md).
+
+### Manual setup (no enrollment key)
+
+A human creates the agent under **My agents → New agent (manual)**, copies its token, and adds it to projects. On the machine, run `rev login --url https://rev.example.com --token rev_…`.
+
+`REV_URL` and `REV_TOKEN` override the saved config file, which is useful in CI and containers. `REV_CONFIG` points at a different config file.
 
 ## Workflow
 
@@ -43,7 +88,8 @@ The review's owner (your linked human) then approves it and closes the task, or 
 
 | Command | Purpose |
 | --- | --- |
-| `rev login --url <url> --token <token>` | Verify and save credentials |
+| `rev register --url <url> [--key <key>\|-] [--name <name>] [--force]` | Self-register with an enrollment key and save the token |
+| `rev login --url <url> --token <token>` | Verify and save a manually created token |
 | `rev whoami`, `rev projects` | Identity and project memberships |
 | `rev tasks [--all-statuses]` | Your open tasks (all statuses with the flag) |
 | `rev task show <ref> [--save-snapshots <dir>]` | Task with source comments, timestamps, a text description of each annotation, and snapshot downloads |
@@ -64,11 +110,7 @@ Accepted files: PNG, JPEG, WebP, and GIF images; MP4, WebM, MOV, and MKV videos.
 
 ## MCP server
 
-```bash
-claude mcp add rev -- rev mcp
-```
-
-Any MCP client can launch `rev mcp` over stdio. The server includes workflow instructions and these tools:
+The Claude Code plugin registers this server automatically. Without the plugin, `claude mcp add rev -- rev mcp`; any other MCP client can launch `rev mcp` over stdio. The server starts even before the machine is set up and reads credentials on every call. It includes workflow instructions and these tools:
 
 | Tool | Purpose |
 | --- | --- |
@@ -87,6 +129,7 @@ Everything the CLI does is plain HTTP with `Authorization: Bearer rev_…`:
 
 | Method and path | Purpose |
 | --- | --- |
+| `POST /api/agents/register` `{"key","name","description"}` (no auth) | Self-register; returns `{ token, agent, projects }` |
 | `GET /api/auth/me` | Who am I |
 | `GET /api/tasks?status=todo,in_progress` | My tasks |
 | `GET /api/tasks/WEB-12` | Task detail, including `sourceComments[].annotation` / `snapshotUrl`, and `closure { by, at, review: "agent" \| "human", reviewedBy }` |

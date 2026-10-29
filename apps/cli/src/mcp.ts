@@ -37,7 +37,13 @@ async function guard(fn: () => Promise<{ content: Content[] }>) {
   }
 }
 
-export function createMcpServer(api: RevApi) {
+/**
+ * `client` may be a function so the server can start before this machine is
+ * registered; it is resolved on every tool call, so tools work as soon as
+ * `rev register` (or `/rev:setup`) has saved credentials.
+ */
+export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
+  const getApi = typeof client === "function" ? client : async () => client;
   const server = new McpServer({ name: "rev", version: VERSION }, { instructions: INSTRUCTIONS });
   const readOnly = { readOnlyHint: true, openWorldHint: false };
 
@@ -46,6 +52,7 @@ export function createMcpServer(api: RevApi) {
     { description: "Show which Rev agent account this server is authenticated as.", annotations: readOnly },
     () =>
       guard(async () => {
+        const api = await getApi();
         const me = await api.me();
         return text(`${me.user.name} (${me.user.kind}) on ${api.baseUrl}`);
       }),
@@ -56,6 +63,7 @@ export function createMcpServer(api: RevApi) {
     { description: "List the Rev projects this agent is a member of.", annotations: readOnly },
     () =>
       guard(async () => {
+        const api = await getApi();
         const projects = await api.projects();
         if (!projects.length) return text("Not a member of any project yet. Ask your linked human to add you.");
         return text(
@@ -75,6 +83,7 @@ export function createMcpServer(api: RevApi) {
     },
     ({ include_closed }) =>
       guard(async () => {
+        const api = await getApi();
         const tasks = await api.myTasks(include_closed ? [...TASK_STATUSES] : undefined);
         if (!tasks.length) return text("No tasks assigned to you.");
         return text(tasks.map(formatTaskLine).join("\n"));
@@ -94,6 +103,7 @@ export function createMcpServer(api: RevApi) {
     },
     ({ ref, include_snapshots }) =>
       guard(async () => {
+        const api = await getApi();
         const task = await api.task(ref);
         const names = await assetNamesFor(api, task.sourceReview?.ref);
         const content: Content[] = [{ type: "text", text: formatTask(api, task, names) }];
@@ -120,6 +130,7 @@ export function createMcpServer(api: RevApi) {
     },
     ({ ref, status, note }) =>
       guard(async () => {
+        const api = await getApi();
         let task = await api.updateTaskStatus(ref, status);
         if (note?.trim()) task = await api.commentOnTask(ref, note);
         return text(`${task.ref} is now ${task.status}.`);
@@ -134,6 +145,7 @@ export function createMcpServer(api: RevApi) {
     },
     ({ ref, body }) =>
       guard(async () => {
+        const api = await getApi();
         await api.commentOnTask(ref, body);
         return text(`Comment posted on ${ref}.`);
       }),
@@ -156,6 +168,7 @@ export function createMcpServer(api: RevApi) {
     },
     (args) =>
       guard(async () => {
+        const api = await getApi();
         const review = await createReviewKit(api, {
           project: args.project,
           title: args.title,
@@ -184,6 +197,7 @@ export function createMcpServer(api: RevApi) {
     },
     ({ ref, include_snapshots }) =>
       guard(async () => {
+        const api = await getApi();
         const review = await api.review(ref);
         const content: Content[] = [{ type: "text", text: formatReview(api, review) }];
         if (include_snapshots) {
@@ -209,6 +223,7 @@ export function createMcpServer(api: RevApi) {
     },
     ({ review_ref, comment_id, body }) =>
       guard(async () => {
+        const api = await getApi();
         await api.commentOnReview(review_ref, { body, parentId: comment_id });
         return text(`Replied on ${review_ref}.`);
       }),
@@ -222,6 +237,7 @@ export function createMcpServer(api: RevApi) {
     },
     ({ review_ref, body }) =>
       guard(async () => {
+        const api = await getApi();
         await api.commentOnReview(review_ref, { body });
         return text(`Comment posted on ${review_ref}.`);
       }),
@@ -230,7 +246,7 @@ export function createMcpServer(api: RevApi) {
   return server;
 }
 
-export async function runMcpServer(api: RevApi) {
-  const server = createMcpServer(api);
+export async function runMcpServer(client: RevApi | (() => Promise<RevApi>)) {
+  const server = createMcpServer(client);
   await server.connect(new StdioServerTransport());
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import { Bot, KeyRound, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router";
 import type { AgentInfo } from "@rev/shared";
 import { api } from "../api";
@@ -8,40 +8,21 @@ import { useUser } from "../auth";
 import { PageHeader } from "../components/Layout";
 import { Badge, Button, Card, EmptyState, ErrorBox, Field, Input, Modal, PageLoader, Textarea } from "../components/ui";
 import { timeAgo } from "../lib";
-
-function CopyBlock({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="group relative">
-      <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 pr-10 text-xs leading-relaxed text-zinc-100">{text}</pre>
-      <button
-        className="absolute top-2 right-2 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-        onClick={() => {
-          navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
-        title="Copy"
-      >
-        {copied ? <span className="text-[10px]">copied</span> : <Copy className="size-3.5" />}
-      </button>
-    </div>
-  );
-}
+import { EnrollmentKeys } from "./EnrollmentKeys";
+import { CopyBlock } from "../components/CopyBlock";
 
 export function setupInstructions(token: string) {
   const origin = window.location.origin;
   return [
-    "# 1. Install the rev CLI (Node.js 20+)",
+    "# 1. Install the rev CLI and save this agent's token (Node.js 20+)",
     `mkdir -p ~/.local/bin && curl -fsSL ${origin}/downloads/rev.mjs -o ~/.local/bin/rev && chmod +x ~/.local/bin/rev`,
-    "",
-    "# 2. Log in as this agent",
     `rev login --url ${origin} --token ${token}`,
     "",
-    "# 3a. Claude Code / MCP clients: register the Rev MCP server",
-    "claude mcp add rev -- rev mcp",
+    "# 2a. Claude Code: install the Rev plugin (MCP tools + /rev:workflow skill)",
+    "/plugin marketplace add vibotaku/Rev",
+    "/plugin install rev@vibotaku",
     "",
-    "# 3b. Or use the CLI directly",
+    "# 2b. Other MCP clients: run `rev mcp` as a stdio server. Or use the CLI directly:",
     "rev tasks",
     'rev review create --project KEY --title "What changed" recording.mp4 screenshot.png',
   ].join("\n");
@@ -82,7 +63,7 @@ export function Agents() {
     <div>
       <PageHeader
         title="Agents"
-        subtitle="Agents act on your behalf: they submit review kits and work on tasks you assign them. You decide on their reviews."
+        subtitle="Agents act on your behalf: they submit review kits and work on tasks you assign them. You decide on their reviews. Agents can register themselves with an enrollment key, or you can create one by hand."
         actions={
           <>
             {me.role === "admin" && (
@@ -90,19 +71,22 @@ export function Agents() {
                 <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> All agents
               </label>
             )}
-            <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus className="size-4" /> New agent
+            <Button onClick={() => setCreating(true)} title="Create an agent by hand and copy its token to the machine">
+              <Plus className="size-4" /> New agent (manual)
             </Button>
           </>
         }
       />
       <div className="mx-auto max-w-4xl space-y-4 px-8 py-6">
+        <EnrollmentKeys showAll={showAll} />
+        <h2 className="pt-4 text-sm font-semibold text-zinc-700">{showAll ? "All agents" : "Your agents"}</h2>
         <ErrorBox error={error ?? mintToken.error ?? revoke.error} />
         {isLoading ? (
           <PageLoader />
         ) : !data?.length ? (
           <EmptyState icon={<Bot className="size-8" />} title="No agents yet">
-            Create an agent for each coding agent you run (e.g. "Claude Code on build box"), give it a token, and add it to projects.
+            Create an enrollment key above and run <code className="text-xs">/rev:setup</code> (Claude Code plugin) or{" "}
+            <code className="text-xs">rev register</code> on the agent's machine, or create an agent by hand.
           </EmptyState>
         ) : (
           data.map((a) => (
@@ -116,6 +100,11 @@ export function Agents() {
                     <span className="font-medium">{a.name}</span>
                     {a.disabled && <Badge className="bg-red-50 text-red-600">disabled</Badge>}
                     {a.owner.id !== me.id && <span className="text-xs text-zinc-500">linked to {a.owner.name}</span>}
+                    {a.enrolledVia && (
+                      <Badge className="bg-sky-50 text-sky-700">
+                        <KeyRound className="size-3" /> self-registered · {a.enrolledVia.name}
+                      </Badge>
+                    )}
                   </div>
                   {a.description && <p className="text-sm text-zinc-500">{a.description}</p>}
                   <div className="mt-2 flex flex-wrap gap-1.5">

@@ -125,6 +125,26 @@ export const agentUpdateBody = z.object({
 });
 export const tokenCreateBody = z.object({ name: z.string().trim().min(1).max(100) });
 
+export const enrollmentKeyCreateBody = z.object({
+  name: z.string().trim().min(1).max(100),
+  /** Projects every agent registered with this key joins. */
+  projects: z
+    .array(z.object({ key: z.string().trim().toUpperCase(), role: z.enum(["member", "viewer"]).default("member") }))
+    .max(50)
+    .default([]),
+  /** null = unlimited registrations. */
+  maxUses: z.number().int().min(1).max(10_000).nullable().default(null),
+  /** null = never expires. */
+  expiresInDays: z.number().int().min(1).max(3650).nullable().default(30),
+});
+
+/** Sent by an agent registering itself (unauthenticated apart from the key). */
+export const agentRegisterBody = z.object({
+  key: z.string().trim().min(10).max(200),
+  name: z.string().trim().min(1).max(100),
+  description: z.string().max(2000).default(""),
+});
+
 export const projectKey = z
   .string()
   .trim()
@@ -237,8 +257,34 @@ export interface AgentInfo {
   description: string;
   disabled: boolean;
   owner: UserSummary;
+  /** Set when the agent registered itself with an enrollment key. */
+  enrolledVia: { id: string; name: string } | null;
   createdAt: string;
   tokens: ApiTokenInfo[];
+  projects: { key: string; name: string; role: ProjectRole }[];
+}
+
+export interface EnrollmentKeyInfo {
+  id: string;
+  name: string;
+  prefix: string;
+  createdBy: UserSummary;
+  projects: { key: string; name: string; role: "member" | "viewer" }[];
+  maxUses: number | null;
+  uses: number;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  /** Usable right now: not revoked, expired or used up. */
+  active: boolean;
+  agents: { id: string; name: string; disabled: boolean }[];
+}
+
+export interface AgentRegistration {
+  /** API token for the new agent; only returned once. */
+  token: string;
+  agent: { id: string; name: string; owner: UserSummary };
   projects: { key: string; name: string; role: ProjectRole }[];
 }
 

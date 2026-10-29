@@ -19,7 +19,8 @@ agent ──rev review create──▶ review kit ──humans annotate & commen
 - **Review → task hand-off.** The owner selects comments and creates one task from them. The comments are marked accepted, and the task is assigned to the agent that submitted the review by default. When the task is done, its comments become resolved.
 - **Human-reviewed vs agent-closed.** Agents may close their own tasks. Every closure records who closed it and whether a human has reviewed it. Agent closures show with a dashed violet "agent" badge on the board, in lists, and on reviews, until a human marks them reviewed (or closes the task themselves). Your dashboard lists what your agents closed, and the history stays in the task's activity log.
 - **Auth and privileges.** Email/password accounts (invite-only), scoped agent API tokens, and global and per-project roles. See [Permissions](#permissions).
-- **Agent tooling.** A single-file `rev` CLI, served by your Rev instance at `/downloads/rev.mjs`, which also runs as an MCP server (`rev mcp`).
+- **Agent self-registration.** A human creates an **enrollment key** with default projects, a use limit, and an expiry. Agents holding it register themselves, become linked to that human, and get their own token. Keys can be revoked; you can optionally disable every agent enrolled with a key at the same time.
+- **Agent tooling.** A Claude Code plugin (`/rev:setup`, a `/rev:workflow` skill, and MCP tools) plus a single-file `rev` CLI. The CLI is served by your Rev instance at `/downloads/rev.mjs` and also runs as an MCP server (`rev mcp`).
 - **Easy to self-host.** One `docker compose up -d` brings up Rev, Postgres, and ffmpeg. See the [Proxmox guide](docs/deploy-proxmox.md).
 
 ## Quick start (Proxmox / any Debian host)
@@ -33,18 +34,24 @@ The script installs Docker if it is missing, writes `.env` with a random databas
 
 ## Connecting an agent
 
-1. In Rev, go to **My agents → New agent**. Copy the token; it is shown once.
-2. Open a project's **Members** tab and add the agent.
-3. On the agent's machine (Node.js 20 or later):
+1. In Rev, go to **My agents → New enrollment key**. Choose the projects new agents join, then copy the key; it is shown once.
+2. **Claude Code:** install the plugin and let Claude register itself:
 
-```bash
-mkdir -p ~/.local/bin && curl -fsSL https://rev.example.com/downloads/rev.mjs -o ~/.local/bin/rev && chmod +x ~/.local/bin/rev
-rev login --url https://rev.example.com --token rev_…
-claude mcp add rev -- rev mcp        # Claude Code / any MCP client
-rev review create -p WEB -t "New onboarding flow" --task WEB-12 recording.mp4 screenshot.png
-```
+   ```text
+   /plugin marketplace add vibotaku/Rev
+   /plugin install rev@vibotaku
+   /rev:setup https://rev.example.com rev_enroll_…
+   ```
 
-See **[docs/agents.md](docs/agents.md)** for every CLI command and MCP tool.
+   **Any other agent, CI job, or script** (Node.js 20 or later):
+
+   ```bash
+   mkdir -p ~/.local/bin && curl -fsSL https://rev.example.com/downloads/rev.mjs -o ~/.local/bin/rev && chmod +x ~/.local/bin/rev
+   REV_ENROLL_KEY=rev_enroll_… rev register --url https://rev.example.com --name build-01
+   rev mcp      # stdio MCP server for any MCP client
+   ```
+
+You can still create an agent by hand (**New agent (manual)**) and use `rev login --url … --token …`. See **[docs/agents.md](docs/agents.md)** for setup details, every CLI command, and the MCP tools.
 
 ## Concepts
 
@@ -65,6 +72,7 @@ Global roles: **admin** (manages people, acts as owner of every project) and **m
 | --- | --- |
 | Invite people, reset passwords, disable accounts | Admins |
 | Create projects | Any human |
+| Create enrollment keys | Any human, for projects where they are an owner or member. Agents registered with a key are linked to its creator. |
 | Add or remove project members, change roles, archive | Project owners. Members may add or remove *their own* agents. |
 | Create and edit tasks | Human owners and members |
 | Assign a task to a human | Human owners and members (assignee must be a non-viewer member) |
@@ -102,7 +110,8 @@ After changing `apps/server/src/db/schema.ts`, run `npm run db:generate` and com
 packages/shared   zod request schemas, DTO types, enums shared by every app
 apps/server       Fastify API, auth, permissions (src/lib/access.ts), media processing, Drizzle schema + migrations
 apps/web          React + Vite + Tailwind UI (review workspace in src/review/)
-apps/cli          `rev` CLI and MCP server, bundled into one file
+apps/cli          `rev` CLI and MCP server, bundled into one file (copied into plugins/rev/cli on build)
+plugins/rev       Claude Code plugin (marketplace manifest in .claude-plugin/ at the repo root)
 deploy/           install / backup / restore scripts, Caddyfile, container entrypoint
 ```
 

@@ -42,10 +42,37 @@ export const users = pgTable(
     /** For agents: the human the agent is linked to and acts on behalf of. */
     ownerId: uuid("owner_id").references((): AnyPgColumn => users.id),
     description: text("description").notNull().default(""),
+    /** For self-registered agents: the enrollment key they registered with. */
+    enrolledVia: uuid("enrolled_via").references((): AnyPgColumn => enrollmentKeys.id, { onDelete: "set null" }),
     disabledAt: ts("disabled_at"),
     createdAt: createdAt(),
   },
   (t) => [index("users_owner_idx").on(t.ownerId)],
+);
+
+/**
+ * Lets agents register themselves. Agents enrolled with a key are linked to the
+ * human who created it and join the key's projects.
+ */
+export const enrollmentKeys = pgTable(
+  "enrollment_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    keyHash: text("key_hash").notNull().unique(),
+    prefix: text("prefix").notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "cascade" }),
+    projects: jsonb("projects").$type<{ projectId: string; role: "member" | "viewer" }[]>().notNull().default([]),
+    maxUses: integer("max_uses"),
+    uses: integer("uses").notNull().default(0),
+    expiresAt: ts("expires_at"),
+    revokedAt: ts("revoked_at"),
+    lastUsedAt: ts("last_used_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("enrollment_keys_created_by_idx").on(t.createdBy)],
 );
 
 export const sessions = pgTable(

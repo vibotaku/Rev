@@ -2,11 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { agentCreateBody, agentUpdateBody, tokenCreateBody, type AgentInfo, type ApiTokenInfo } from "@rev/shared";
 import type { AppContext } from "../context";
-import { apiTokens, projectMembers, projects, users } from "../db/schema";
+import { apiTokens, enrollmentKeys, projectMembers, projects, users } from "../db/schema";
 import { requireHuman, type Actor } from "../lib/auth";
 import { newApiToken } from "../lib/crypto";
 import { forbidden, notFound, parse } from "../lib/errors";
 import { loadUsers } from "../lib/serialize";
+import { assertAgentNameFree } from "./enrollment";
 
 function tokenInfo(t: typeof apiTokens.$inferSelect): ApiTokenInfo {
   return {
@@ -30,7 +31,8 @@ export default async function agentRoutes(app: FastifyInstance, ctx: AppContext)
   async function describe(rows: (typeof users.$inferSelect)[]): Promise<AgentInfo[]> {
     if (!rows.length) return [];
     const ids = rows.map((a) => a.id);
-    const [owners, tokens, memberships] = await Promise.all([
+    const keyIds = [...new Set(rows.map((a) => a.enrolledVia).filter((k): k is string => !!k))];
+    const [owners, tokens, memberships, keys] = await Promise.all([
       loadUsers(ctx.db, rows.map((a) => a.ownerId)),
       ctx.db.select().from(apiTokens).where(inArray(apiTokens.userId, ids)).orderBy(desc(apiTokens.createdAt)),
       ctx.db
@@ -38,13 +40,18 @@ export default async function agentRoutes(app: FastifyInstance, ctx: AppContext)
         .from(projectMembers)
         .innerJoin(projects, eq(projects.id, projectMembers.projectId))
         .where(inArray(projectMembers.userId, ids)),
+      keyIds.length
+        ? ctx.db.select({ id: enrollmentKeys.id, name: enrollmentKeys.name }).from(enrollmentKeys).where(inArray(enrollmentKeys.id, keyIds))
+        : Promise.resolve([]),
     ]);
+    const keyBy = new Map(keys.map((k) => [k.id, k]));
     return rows.map((a) => ({
       id: a.id,
       name: a.name,
       description: a.description,
       disabled: !!a.disabledAt,
       owner: owners.get(a.ownerId!)!,
+      enrolledVia: a.enrolledVia ? (keyBy.get(a.enrolledVia) ?? null) : null,
       createdAt: a.createdAt.toISOString(),
       tokens: tokens.filter((t) => t.userId === a.id && !t.revokedAt).map(tokenInfo),
       projects: memberships.filter((m) => m.userId === a.id).map(({ key, name, role }) => ({ key, name, role })),
@@ -65,6 +72,7 @@ export default async function agentRoutes(app: FastifyInstance, ctx: AppContext)
   app.post("/api/agents", async (req) => {
     const actor = requireHuman(req, "create agents");
     const body = parse(agentCreateBody, req.body);
+    await assertAgentNameFree(ctx.db, actor.id, body.name);
     const [agent] = await ctx.db
       .insert(users)
       .values({ name: body.name, description: body.description, kind: "agent", role: "member", ownerId: actor.id })
@@ -76,6 +84,7 @@ export default async function agentRoutes(app: FastifyInstance, ctx: AppContext)
     const actor = requireHuman(req, "manage agents");
     const agent = await loadAgent(actor, req.params.id);
     const body = parse(agentUpdateBody, req.body);
+    if (body.name && body.name.toLowerCase() !== agent.name.toLowerCase()) await assertAgentNameFree(ctx.db, agent.ownerId!, body.name);
     const [updated] = await ctx.db
       .update(users)
       .set({

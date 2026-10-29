@@ -190,7 +190,7 @@ describe("CLI commands", () => {
     expect(login.out).toContain("Logged in as claude-bot (agent)");
     expect(statSync(configFile).mode & 0o777).toBe(0o600);
     expect((await cli(["whoami", "--json"], env)).out).toContain('"kind": "agent"');
-    await expect(cli(["whoami"], { REV_CONFIG: path.join(server.dataDir, "none.json") })).rejects.toThrow("Not logged in");
+    await expect(cli(["whoami"], { REV_CONFIG: path.join(server.dataDir, "none.json") })).rejects.toThrow("not set up on this machine");
   });
 
   it("lists tasks, saves snapshots and delivers a review for a task", async () => {
@@ -222,6 +222,48 @@ describe("CLI commands", () => {
     expect(closed.closure).toMatchObject({ review: "agent", by: { kind: "agent" } });
     expect((await cli(["review", "reply", commentId, "ack", "--review", "WEB-R1"], env)).out).toContain("Replied on WEB-R1");
     await expect(cli(["task", "status", "WEB-1", "bogus"], env)).rejects.toThrow();
+  });
+
+  it("self-registers with an enrollment key and refuses to clobber an existing setup", async () => {
+    const enroll = (await admin.post("/api/enrollment-keys", { name: "ci", projects: [{ key: "WEB" }], maxUses: 5 })).json.key;
+    const configFile = path.join(server.dataDir, "enrolled", "config.json");
+    const env = { REV_CONFIG: configFile, REV_ENROLL_KEY: enroll };
+    const reg = await cli(["register", "--url", `${baseUrl}/`, "--name", "ci-runner-1"], env);
+    expect(reg.out).toContain("Registered as ci-runner-1 (agent, linked to Olivia)");
+    expect(reg.out).toContain("Projects: WEB (member)");
+    expect(statSync(configFile).mode & 0o777).toBe(0o600);
+    expect((await cli(["whoami"], { REV_CONFIG: configFile })).out).toContain("ci-runner-1 (agent)");
+
+    await expect(cli(["register", "--url", baseUrl, "--name", "ci-runner-2"], env)).rejects.toThrow("already set up");
+    const forced = JSON.parse((await cli(["--json", "register", "--url", baseUrl, "--name", "ci-runner-2", "--force"], env)).out);
+    expect(forced.agent.name).toBe("ci-runner-2");
+    await expect(
+      cli(["register", "--url", baseUrl, "--key", "rev_enroll_bogus-key", "--force"], { REV_CONFIG: configFile }),
+    ).rejects.toThrow("Invalid enrollment key");
+  });
+
+  it("starts the MCP server before registration and works right after", async () => {
+    const configFile = path.join(server.dataDir, "lazy", "config.json");
+    const env = { REV_CONFIG: configFile };
+    const { loadConfig } = await import("../src/config");
+    const lazy = async () => {
+      const cfg = await loadConfig(env);
+      if (!cfg.url || !cfg.token) throw new Error("Rev is not set up on this machine.");
+      return new RevApi(cfg.url, cfg.token);
+    };
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await createMcpServer(lazy).connect(serverT);
+    const client = new McpClient({ name: "lazy-test", version: "0" });
+    await client.connect(clientT);
+    const before = (await client.callTool({ name: "whoami", arguments: {} })) as ToolResult;
+    expect(before.isError).toBe(true);
+    expect(textOf(before)).toContain("not set up");
+
+    const enroll = (await admin.post("/api/enrollment-keys", { name: "lazy" })).json.key;
+    await cli(["register", "--url", baseUrl, "--key", enroll, "--name", "lazy-bot"], env);
+    const after = (await client.callTool({ name: "whoami", arguments: {} })) as ToolResult;
+    expect(textOf(after)).toContain("lazy-bot (agent)");
+    await client.close();
   });
 
   it("builds a single-file bundle", () => {

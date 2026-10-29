@@ -19,6 +19,7 @@ import adminRoutes from "./routes/admin";
 import agentRoutes from "./routes/agents";
 import authRoutes from "./routes/auth";
 import dashboardRoutes from "./routes/dashboard";
+import enrollmentRoutes from "./routes/enrollment";
 import mediaRoutes from "./routes/media";
 import projectRoutes from "./routes/projects";
 import reviewRoutes from "./routes/reviews";
@@ -111,7 +112,17 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
     return reply.sendFile(path.basename(config.cliBundle), path.dirname(config.cliBundle));
   });
 
-  for (const routes of [authRoutes, adminRoutes, agentRoutes, projectRoutes, taskRoutes, reviewRoutes, mediaRoutes, dashboardRoutes]) {
+  for (const routes of [
+    authRoutes,
+    adminRoutes,
+    agentRoutes,
+    enrollmentRoutes,
+    projectRoutes,
+    taskRoutes,
+    reviewRoutes,
+    mediaRoutes,
+    dashboardRoutes,
+  ]) {
     await routes(app, ctx);
   }
 

@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Argument, Command } from "commander";
 import { TASK_STATUSES, type TaskStatus } from "@rev/shared";
@@ -23,6 +24,12 @@ const defaultIo: Io = {
 
 const collect = (value: string, prev: string[] = []) => [...prev, value];
 
+async function readStdin() {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export function buildProgram(io: Io = defaultIo) {
   const program = new Command("rev")
     .description("Rev for agents: pull tasks, submit review kits (screenshots + videos), answer feedback.")
@@ -34,7 +41,10 @@ export function buildProgram(io: Io = defaultIo) {
   async function api() {
     const cfg = await loadConfig(io.env);
     if (!cfg.url || !cfg.token) {
-      throw new Error("Not logged in. Run `rev login --url <url> --token <token>` or set REV_URL and REV_TOKEN.");
+      throw new Error(
+        "Rev is not set up on this machine. Register with `rev register --url <url> --key <enrollment key>` " +
+          "(Claude Code: /rev:setup), log in with `rev login --url <url> --token <token>`, or set REV_URL and REV_TOKEN.",
+      );
     }
     return new RevApi(cfg.url, cfg.token);
   }
@@ -57,6 +67,45 @@ export function buildProgram(io: Io = defaultIo) {
         `Logged in as ${me.user.name} (${me.user.kind}) on ${client.baseUrl}\nSaved to ${file}`,
       );
     });
+
+  program
+    .command("register")
+    .description("Register this machine as a new agent using an enrollment key, and save its token")
+    .requiredOption("--url <url>", "Rev base URL, e.g. https://rev.example.com")
+    .option("--key <key>", "enrollment key (rev_enroll_...); `-` reads it from stdin; defaults to $REV_ENROLL_KEY")
+    .option("--name <name>", "agent name, unique among your human's agents (default: <user>@<host>)")
+    .option("--description <text>", "what/where this agent is (default: host and platform)")
+    .option("--force", "register a new agent even if this machine already has saved credentials")
+    .action(
+      async (
+        opts: { url: string; key?: string; name?: string; description?: string; force?: boolean },
+        cmd: Command,
+      ) => {
+        const existing = await loadConfig(io.env);
+        if (existing.url && existing.token && !opts.force) {
+          throw new Error(
+            `This machine is already set up for ${existing.url} (${configPath(io.env)}). ` +
+              "Run `rev whoami` to check it, or pass --force to register another agent.",
+          );
+        }
+        const key = (opts.key === "-" ? await readStdin() : (opts.key ?? io.env.REV_ENROLL_KEY ?? "")).trim();
+        if (!key) throw new Error("No enrollment key: pass --key <key>, --key - (stdin), or set REV_ENROLL_KEY.");
+        const host = os.hostname().split(".")[0] || "host";
+        const name = opts.name ?? `${os.userInfo().username}@${host}`;
+        const description = opts.description ?? `Registered from ${host} (${process.platform} ${process.arch}) with rev ${VERSION}`;
+        const baseUrl = opts.url.replace(/\/+$/, "");
+        const reg = await RevApi.register(baseUrl, { key, name, description });
+        const file = await saveConfig({ url: baseUrl, token: reg.token }, io.env);
+        const projects = reg.projects.map((p) => `${p.key} (${p.role})`).join(", ") || "none yet (ask your human to add you)";
+        emit(cmd, { agent: reg.agent, projects: reg.projects, url: baseUrl, config: file }, () =>
+          [
+            `Registered as ${reg.agent.name} (agent, linked to ${reg.agent.owner.name}) on ${baseUrl}`,
+            `Projects: ${projects}`,
+            `Saved to ${file}`,
+          ].join("\n"),
+        );
+      },
+    );
 
   program
     .command("whoami")
@@ -236,7 +285,8 @@ export function buildProgram(io: Io = defaultIo) {
     .command("mcp")
     .description("Run a Model Context Protocol server on stdio (e.g. `claude mcp add rev -- rev mcp`)")
     .action(async () => {
-      await runMcpServer(await api());
+      // Start even when not registered yet; tools report how to set up until credentials exist.
+      await runMcpServer(api);
     });
 
   return program;

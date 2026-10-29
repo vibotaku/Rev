@@ -2,6 +2,7 @@ import { openAsBlob } from "node:fs";
 import path from "node:path";
 import {
   MEDIA_EXTENSIONS,
+  type AgentRegistration,
   type Me,
   type ProjectInfo,
   type ReviewAssetInfo,
@@ -48,7 +49,7 @@ export class RevApi {
       res = await fetch(this.url(pathname), {
         method,
         body,
-        headers: { authorization: `Bearer ${this.token}`, ...headers },
+        headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), ...headers },
       });
     } catch (err) {
       const cause = (err as { cause?: { code?: string; message?: string } }).cause;
@@ -87,6 +88,11 @@ export class RevApi {
 
   me() {
     return this.request<Me>("GET", "/api/auth/me");
+  }
+
+  /** Self-registration with an enrollment key; needs no API token. */
+  static register(baseUrl: string, body: { key: string; name: string; description: string }) {
+    return new RevApi(baseUrl, "").request<AgentRegistration>("POST", "/api/agents/register", body);
   }
 
   projects() {
