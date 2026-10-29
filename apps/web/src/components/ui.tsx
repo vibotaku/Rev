@@ -1,10 +1,11 @@
 import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Bot, Loader2, X } from "lucide-react";
+import { Bot, Loader2, UserCheck, X } from "lucide-react";
 import {
   REVIEW_STATUS_LABELS,
   TASK_STATUS_LABELS,
+  type ClosureReview,
   type CommentStatus,
   type ReviewStatus,
   type TaskPriority,
@@ -210,8 +211,34 @@ const taskStatusStyle: Record<TaskStatus, string> = {
   cancelled: "bg-zinc-100 text-zinc-400 line-through",
 };
 
-export function TaskStatusBadge({ status }: { status: TaskStatus }) {
-  return <Badge className={taskStatusStyle[status]}>{TASK_STATUS_LABELS[status]}</Badge>;
+/**
+ * Closed tasks show who reviewed the closure: a dashed violet "agent" badge when
+ * only an agent has closed it, a check when a human closed or reviewed it.
+ */
+export function TaskStatusBadge({ status, closureReview, title }: { status: TaskStatus; closureReview?: ClosureReview | null; title?: string }) {
+  if (closureReview === "agent") {
+    return (
+      <Badge className="border border-dashed border-violet-400 bg-violet-50 text-violet-700">
+        <Bot className="size-3" aria-hidden />
+        <span title={title ?? "Closed by an agent — not yet reviewed by a human"}>{TASK_STATUS_LABELS[status]} · agent</span>
+      </Badge>
+    );
+  }
+  return (
+    <Badge className={taskStatusStyle[status]}>
+      {closureReview === "human" && <UserCheck className="size-3" aria-label="Human reviewed" />}
+      <span title={title}>{TASK_STATUS_LABELS[status]}</span>
+    </Badge>
+  );
+}
+
+/** Tooltip text describing a task's closure. */
+export function closureTitle(closure: { review: ClosureReview; by: UserSummary; reviewedBy: UserSummary | null } | null) {
+  if (!closure) return undefined;
+  if (closure.review === "agent") return `Closed by ${closure.by.name} (agent) — not yet reviewed by a human`;
+  return closure.reviewedBy && closure.reviewedBy.id !== closure.by.id
+    ? `Closed by ${closure.by.name}, reviewed by ${closure.reviewedBy.name}`
+    : `Closed by ${closure.by.name}`;
 }
 
 const reviewStatusStyle: Record<ReviewStatus, string> = {

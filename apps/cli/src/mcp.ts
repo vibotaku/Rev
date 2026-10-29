@@ -2,7 +2,7 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { AGENT_TASK_STATUSES, TASK_STATUSES } from "@rev/shared";
+import { TASK_STATUSES } from "@rev/shared";
 import type { RevApi } from "./api";
 import { formatReview, formatTask, formatTaskLine } from "./format";
 import { assetNamesFor, createReviewKit, fetchSnapshots } from "./kit";
@@ -21,7 +21,9 @@ Workflow:
    questions. Accepted feedback comes back to you as new tasks.
 
 Rules: you cannot approve reviews, accept or reject comments, create tasks or assign work; those decisions belong to
-the humans, as is marking tasks done or cancelled. Keep review titles short and descriptions concrete.`;
+the humans. You may close your own tasks ("done"/"cancelled") when nothing needs a human to look at it; such closures are
+shown to humans as agent-closed until one of them reviews it, so leave a note saying what you did and how you verified it.
+Prefer a review kit when there is something visual to check. Keep review titles short and descriptions concrete.`;
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -109,10 +111,10 @@ export function createMcpServer(api: RevApi) {
     "update_task_status",
     {
       description:
-        'Move one of your tasks to "in_progress" when starting, or back to "todo". Submitting a review with task_ref moves it to "in_review"; humans mark it done. Optionally leave a note.',
+        'Move one of your tasks to a new status: "in_progress" when starting; "done"/"cancelled" to close it yourself (flagged as agent-closed until a human reviews it). Submitting a review with task_ref moves it to "in_review" instead. Optionally leave a note.',
       inputSchema: {
         ref: z.string().describe('Task reference such as "WEB-12"'),
-        status: z.enum(AGENT_TASK_STATUSES),
+        status: z.enum(TASK_STATUSES),
         note: z.string().optional().describe("Optional progress note posted on the task"),
       },
     },

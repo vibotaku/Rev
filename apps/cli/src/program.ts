@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Argument, Command } from "commander";
-import { AGENT_TASK_STATUSES, TASK_STATUSES, type TaskStatus } from "@rev/shared";
+import { TASK_STATUSES, type TaskStatus } from "@rev/shared";
 import { RevApi } from "./api";
 import { configPath, loadConfig, saveConfig } from "./config";
 import { formatReview, formatTask, formatTaskLine } from "./format";
@@ -190,7 +190,7 @@ export function buildProgram(io: Io = defaultIo) {
     const client = await api();
     let t = await client.updateTaskStatus(ref, status);
     if (note?.trim()) t = await client.commentOnTask(ref, note);
-    emit(cmd, t, () => `${t.ref} → ${t.status}`);
+    emit(cmd, t, () => `${t.ref} → ${t.status}${t.closure?.review === "agent" ? " (agent-closed until a human reviews it)" : ""}`);
   }
 
   task
@@ -201,9 +201,9 @@ export function buildProgram(io: Io = defaultIo) {
 
   task
     .command("status")
-    .description("Set a task's status (agents: todo, in_progress, in_review; humans mark tasks done)")
+    .description("Set a task's status")
     .argument("<ref>")
-    .addArgument(new Argument("<status>", "new status").choices(AGENT_TASK_STATUSES))
+    .addArgument(new Argument("<status>", "new status").choices(TASK_STATUSES))
     .action((ref: string, status: TaskStatus, _opts, cmd: Command) => setStatus(cmd, ref, status));
 
   task
@@ -212,6 +212,13 @@ export function buildProgram(io: Io = defaultIo) {
     .argument("<ref>")
     .option("-n, --note <text>", "note for the reviewer, posted on the task")
     .action((ref: string, opts: { note?: string }, cmd: Command) => setStatus(cmd, ref, "in_review", opts.note));
+
+  task
+    .command("done")
+    .description("Close a task yourself. It is shown as agent-closed until a human reviews it")
+    .argument("<ref>")
+    .option("-n, --note <text>", "what was done and how it was verified, posted on the task")
+    .action((ref: string, opts: { note?: string }, cmd: Command) => setStatus(cmd, ref, "done", opts.note));
 
   task
     .command("comment")

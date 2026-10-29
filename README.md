@@ -17,6 +17,7 @@ agent ──rev review create──▶ review kit ──humans annotate & commen
 - **Annotation.** Pins, boxes, arrows, and freehand drawing on any video frame or image. Comments carry timestamps and appear as timeline markers. Frame stepping, playback speed, and keyboard shortcuts are built in.
 - **Snapshots for agents.** Each annotated comment stores a rendered JPEG of the exact frame with the marks drawn on it. `rev task show` and the MCP `get_task` tool hand those images to the agent.
 - **Review → task hand-off.** The owner selects comments and creates one task from them. The comments are marked accepted, and the task is assigned to the agent that submitted the review by default. When the task is done, its comments become resolved.
+- **Human-reviewed vs agent-closed.** Agents may close their own tasks. Every closure records who closed it and whether a human has reviewed it. Agent closures show with a dashed violet "agent" badge on the board, in lists, and on reviews, until a human marks them reviewed (or closes the task themselves). Your dashboard lists what your agents closed, and the history stays in the task's activity log.
 - **Auth and privileges.** Email/password accounts (invite-only), scoped agent API tokens, and global and per-project roles. See [Permissions](#permissions).
 - **Agent tooling.** A single-file `rev` CLI, served by your Rev instance at `/downloads/rev.mjs`, which also runs as an MCP server (`rev mcp`).
 - **Easy to self-host.** One `docker compose up -d` brings up Rev, Postgres, and ffmpeg. See the [Proxmox guide](docs/deploy-proxmox.md).
@@ -51,7 +52,7 @@ See **[docs/agents.md](docs/agents.md)** for every CLI command and MCP tool.
 | --- | --- |
 | **User** | A human (email + password) or an **agent** (API tokens only). Each agent is *linked* to the human who created it and acts on their behalf. |
 | **Project** | Has a short key (`WEB`) and members with a project role. |
-| **Task** | `WEB-12`. Statuses: `todo → in_progress → in_review → done` (or `cancelled`). |
+| **Task** | `WEB-12`. Statuses: `todo → in_progress → in_review → done` (or `cancelled`). A closed task is either **human-reviewed** (a human closed it or reviewed the closure) or **agent-closed** (only an agent has looked at it). Reopening clears the closure; the activity log keeps the history. |
 | **Review** | `WEB-R3`. A kit of media plus a description, optionally delivering a task. Statuses: `draft → open → changes_requested / approved → closed`. |
 | **Review owner** | The human who decides on a review. When an agent submits one, the owner is the agent's linked human. |
 | **Comment** | On a review, optionally on a media item, at a timestamp, with an annotation. Statuses: `open → accepted / rejected → resolved`. |
@@ -68,7 +69,8 @@ Global roles: **admin** (manages people, acts as owner of every project) and **m
 | Create and edit tasks | Human owners and members |
 | Assign a task to a human | Human owners and members (assignee must be a non-viewer member) |
 | Assign a task to an **agent** | The agent's **linked human**, or a project owner or admin |
-| Change a task's status | Human owners and members. An agent can only move **its own** tasks between `todo`, `in_progress`, and `in_review`. |
+| Change a task's status | Human owners and members, and an agent on **its own** tasks (including closing them as `done` or `cancelled`) |
+| Mark an agent's closure as human-reviewed | Human owners and members |
 | Create review kits, upload media | Owners and members, humans or agents. Agents can only link reviews to tasks assigned to them. |
 | Comment, reply, annotate | Owners and members |
 | Accept or reject comments, approve or request changes, **create tasks from a review** | The review **owner**, or a project owner (humans only) |
@@ -118,3 +120,7 @@ deploy/           install / backup / restore scripts, Caddyfile, container entry
 | `TRUST_PROXY` | `true` | Honour `X-Forwarded-*` from a reverse proxy |
 | `REV_SETUP_TOKEN` | random | Fix the first-run setup token |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Media tools |
+
+## License
+
+[MIT](LICENSE)

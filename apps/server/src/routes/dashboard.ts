@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, inArray, ne, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, notInArray } from "drizzle-orm";
 import type { DashboardInfo, TaskStatus } from "@rev/shared";
 import type { AppContext } from "../context";
 import { projectMembers, reviews, tasks, users } from "../db/schema";
@@ -18,7 +18,7 @@ export default async function dashboardRoutes(app: FastifyInstance, ctx: AppCont
       await ctx.db.select({ id: users.id }).from(users).where(and(eq(users.kind, "agent"), eq(users.ownerId, actor.id)))
     ).map((a) => a.id);
 
-    const [myTasks, toDecide, agentTasks, recent] = await Promise.all([
+    const [myTasks, toDecide, agentTasks, recent, agentClosures] = await Promise.all([
       ctx.db
         .select()
         .from(tasks)
@@ -47,12 +47,21 @@ export default async function dashboardRoutes(app: FastifyInstance, ctx: AppCont
             .orderBy(desc(reviews.updatedAt))
             .limit(10)
         : Promise.resolve([]),
+      agentIds.length
+        ? ctx.db
+            .select()
+            .from(tasks)
+            .where(and(inArray(tasks.closedBy, agentIds), inArray(tasks.status, CLOSED), isNull(tasks.humanReviewedBy)))
+            .orderBy(desc(tasks.closedAt))
+            .limit(50)
+        : Promise.resolve([]),
     ]);
 
     return {
       myTasks: await serializeTasks(ctx.db, myTasks),
       reviewsToDecide: await serializeReviews(ctx.db, toDecide),
       myAgentsTasks: await serializeTasks(ctx.db, agentTasks),
+      agentClosuresToReview: await serializeTasks(ctx.db, agentClosures),
       recentReviews: await serializeReviews(ctx.db, recent),
     };
   });

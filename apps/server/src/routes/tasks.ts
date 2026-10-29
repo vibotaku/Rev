@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { and, asc, desc, eq, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
 import {
-  AGENT_TASK_STATUSES,
   reviewRef,
   TASK_STATUSES,
   taskCommentBody,
@@ -15,10 +14,10 @@ import type { AppContext } from "../context";
 import { projectMembers, projects, reviewComments, reviews, taskActivity, tasks } from "../db/schema";
 import { assertAssignable, assertCan, assignableUserIds, loadProject, projectPerms, taskPerms } from "../lib/access";
 import { requireActor, type Actor } from "../lib/auth";
-import { badRequest, forbidden, parse } from "../lib/errors";
+import { badRequest, conflict, forbidden, parse } from "../lib/errors";
 import { resolveTask } from "../lib/refs";
 import { loadUsers, serializeComments, serializeTasks } from "../lib/serialize";
-import { insertTask, syncSourceComments } from "../lib/tasks";
+import { closureFields, insertTask, syncSourceComments } from "../lib/tasks";
 
 function statusFilter(raw: string | undefined): TaskStatus[] | null {
   if (!raw) return null;
@@ -145,9 +144,6 @@ export default async function taskRoutes(app: FastifyInstance, ctx: AppContext) 
     if (!perms.edit && !(onlyStatus && perms.updateStatus)) {
       throw forbidden(actor.kind === "agent" ? "Agents can only update the status of tasks assigned to them" : undefined);
     }
-    if (actor.kind === "agent" && body.status && !(AGENT_TASK_STATUSES as readonly string[]).includes(body.status)) {
-      throw forbidden("Agents can move tasks to todo, in_progress or in_review; a human marks them done or cancelled");
-    }
     if (body.assigneeId !== undefined && body.assigneeId !== task.assigneeId) {
       await assertAssignable(ctx.db, project.id, actor, role, body.assigneeId);
     }
@@ -160,13 +156,18 @@ export default async function taskRoutes(app: FastifyInstance, ctx: AppContext) 
         .set({
           ...body,
           updatedAt: now,
-          ...(statusChanged ? { completedAt: body.status === "done" ? now : null } : {}),
+          ...(statusChanged ? closureFields(actor, body.status!, now) : {}),
         })
         .where(eq(tasks.id, task.id));
 
       const events: (typeof taskActivity.$inferInsert)[] = [];
       if (statusChanged) {
-        events.push({ taskId: task.id, actorId: actor.id, kind: "status", data: { from: task.status, to: body.status } });
+        events.push({
+          taskId: task.id,
+          actorId: actor.id,
+          kind: "status",
+          data: { from: task.status, to: body.status, byKind: actor.kind },
+        });
         await syncSourceComments(tx, task.id, body.status!);
       }
       if (body.assigneeId !== undefined && body.assigneeId !== task.assigneeId) {
@@ -181,6 +182,29 @@ export default async function taskRoutes(app: FastifyInstance, ctx: AppContext) 
         events.push({ taskId: task.id, actorId: actor.id, kind: "priority", data: { from: task.priority, to: body.priority } });
       }
       if (events.length) await tx.insert(taskActivity).values(events);
+    });
+    return taskDetail(ctx, actor, task.id);
+  });
+
+  /** A human confirms a task an agent closed; the closure then counts as human-reviewed. */
+  app.post<{ Params: { ref: string } }>("/api/tasks/:ref/review-closure", async (req) => {
+    const actor = requireActor(req);
+    const { task, role } = await resolveTask(ctx.db, actor, req.params.ref);
+    if (actor.kind !== "human") throw forbidden("Only humans can review a closure");
+    if (task.status !== "done" && task.status !== "cancelled") throw badRequest("The task is not closed");
+    if (task.humanReviewedBy) throw conflict("A human has already reviewed this closure");
+    assertCan(taskPerms(actor, role, task).reviewClosure, "You cannot review tasks in this project");
+    const body = parse(taskCommentBody.partial(), req.body ?? {});
+    await ctx.db.transaction(async (tx) => {
+      const now = new Date();
+      await tx.update(tasks).set({ humanReviewedBy: actor.id, humanReviewedAt: now, updatedAt: now }).where(eq(tasks.id, task.id));
+      await tx.insert(taskActivity).values({
+        taskId: task.id,
+        actorId: actor.id,
+        kind: "closure_reviewed",
+        body: body.body ?? "",
+        data: { closedBy: task.closedBy, status: task.status },
+      });
     });
     return taskDetail(ctx, actor, task.id);
   });

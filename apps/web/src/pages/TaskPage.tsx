@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Pencil } from "lucide-react";
+import { ArrowLeft, Bot, Pencil, UserCheck } from "lucide-react";
 import { Link, useParams } from "react-router";
 import {
   formatTimestamp,
@@ -30,6 +30,8 @@ function describeActivity(a: TaskActivityInfo, names: Map<string, string>) {
       return `set priority to ${d.to}`;
     case "review":
       return "submitted a review for it";
+    case "closure_reviewed":
+      return "reviewed the agent's closure";
     default:
       return "";
   }
@@ -47,6 +49,7 @@ export function TaskPage() {
   const { data: members } = useMembers(key);
   const [editing, setEditing] = useState<{ title: string; description: string } | null>(null);
   const [comment, setComment] = useState("");
+  const [reviewNote, setReviewNote] = useState("");
 
   const onSaved = (t: TaskDetail) => {
     qc.setQueryData(["task", ref], t);
@@ -58,6 +61,14 @@ export function TaskPage() {
     onSuccess: (t) => {
       onSaved(t);
       setEditing(null);
+    },
+  });
+  const reviewClosure = useMutation({
+    mutationFn: () => api.post<TaskDetail>(`/api/tasks/${ref}/review-closure`, { body: reviewNote.trim() || undefined }),
+    onSuccess: (t) => {
+      onSaved(t);
+      setReviewNote("");
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
   const addComment = useMutation({
@@ -142,12 +153,13 @@ export function TaskPage() {
             <h2 className="text-sm font-semibold text-zinc-700">Activity</h2>
             <ol className="space-y-3">
               {task.activity.map((a) =>
-                a.kind === "comment" ? (
+                a.kind === "comment" || (a.kind === "closure_reviewed" && a.body) ? (
                   <li key={a.id} className="flex gap-3">
                     <Avatar user={a.actor} />
                     <Card className="min-w-0 flex-1 px-3 py-2">
                       <div className="mb-1 text-xs text-zinc-500">
-                        <span className="font-medium text-zinc-800">{a.actor.name}</span> · {timeAgo(a.createdAt)}
+                        <span className="font-medium text-zinc-800">{a.actor.name}</span>
+                        {a.kind === "closure_reviewed" && " reviewed the agent's closure"} · {timeAgo(a.createdAt)}
                       </div>
                       <Markdown>{a.body}</Markdown>
                     </Card>
@@ -221,6 +233,16 @@ export function TaskPage() {
               </Select>
             </Field>
             <ErrorBox error={update.error} />
+            {task.closure && (
+              <ClosurePanel
+                task={task}
+                note={reviewNote}
+                onNote={setReviewNote}
+                onReview={() => reviewClosure.mutate()}
+                reviewing={reviewClosure.isPending}
+                error={reviewClosure.error}
+              />
+            )}
             <div className="space-y-1 border-t border-zinc-100 pt-3 text-xs text-zinc-500">
               <div>
                 Created by <span className="text-zinc-700">{task.createdBy.name}</span> {timeAgo(task.createdAt)}
@@ -233,7 +255,6 @@ export function TaskPage() {
                   </Link>
                 </div>
               )}
-              {task.completedAt && <div>Completed {timeAgo(task.completedAt)}</div>}
             </div>
           </Card>
           <Card className="p-4">
@@ -257,6 +278,65 @@ export function TaskPage() {
             )}
           </Card>
         </aside>
+      </div>
+    </div>
+  );
+}
+
+/** Who closed the task and whether a human has reviewed that closure. */
+function ClosurePanel({
+  task,
+  note,
+  onNote,
+  onReview,
+  reviewing,
+  error,
+}: {
+  task: TaskDetail;
+  note: string;
+  onNote: (v: string) => void;
+  onReview: () => void;
+  reviewing: boolean;
+  error: unknown;
+}) {
+  const closure = task.closure!;
+  const verb = task.status === "cancelled" ? "Cancelled" : "Closed";
+  if (closure.review === "agent") {
+    return (
+      <div className="space-y-2 rounded-md border border-dashed border-violet-400 bg-violet-50 p-3 text-xs text-violet-900">
+        <div className="flex items-center gap-1.5 font-semibold">
+          <Bot className="size-4" /> {verb} by an agent
+        </div>
+        <div>
+          {closure.by.name} closed this {timeAgo(closure.at)}. No human has reviewed it yet.
+        </div>
+        {task.can.reviewClosure && (
+          <>
+            <Textarea rows={2} value={note} onChange={(e) => onNote(e.target.value)} placeholder="Review note (optional)" className="text-xs" />
+            <Button size="sm" variant="primary" className="w-full" loading={reviewing} onClick={onReview}>
+              <UserCheck className="size-3.5" /> Mark as human-reviewed
+            </Button>
+            <div className="text-violet-700">Not right? Change the status to reopen it.</div>
+          </>
+        )}
+        <ErrorBox error={error} />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+      <div className="flex items-center gap-1.5 font-semibold">
+        <UserCheck className="size-4" /> Human-reviewed
+      </div>
+      <div>
+        {verb} by {closure.by.name}
+        {closure.by.kind === "agent" ? " (agent)" : ""} {timeAgo(closure.at)}
+        {closure.reviewedBy && closure.reviewedBy.id !== closure.by.id && (
+          <>
+            , reviewed by {closure.reviewedBy.name} {closure.reviewedAt ? timeAgo(closure.reviewedAt) : ""}
+          </>
+        )}
+        .
       </div>
     </div>
   );

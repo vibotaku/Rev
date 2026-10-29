@@ -11,6 +11,7 @@ import {
   type UserSummary,
 } from "@rev/shared";
 import type { Db } from "../db";
+import { closureReviewOf } from "./tasks";
 import { projects, reviewAssets, reviewComments, reviews, tasks, users } from "../db/schema";
 
 type UserRow = typeof users.$inferSelect;
@@ -52,7 +53,7 @@ async function projectKeys(db: Db, ids: string[]) {
 export async function serializeTasks(db: Db, rows: TaskRow[]): Promise<TaskInfo[]> {
   if (!rows.length) return [];
   const [userMap, keys] = await Promise.all([
-    loadUsers(db, rows.flatMap((t) => [t.assigneeId, t.createdBy])),
+    loadUsers(db, rows.flatMap((t) => [t.assigneeId, t.createdBy, t.closedBy, t.humanReviewedBy])),
     projectKeys(db, unique(rows.map((t) => t.projectId))),
   ]);
   const reviewIds = unique(rows.map((t) => t.sourceReviewId));
@@ -82,7 +83,16 @@ export async function serializeTasks(db: Db, rows: TaskRow[]): Promise<TaskInfo[
       sourceReview: t.sourceReviewId ? (sourceReviews.get(t.sourceReviewId) ?? null) : null,
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),
-      completedAt: iso(t.completedAt),
+      closure:
+        t.closedAt && closureReviewOf(t)
+          ? {
+              by: t.closedBy ? (userMap.get(t.closedBy) ?? unknownUser(t.closedBy)) : unknownUser(""),
+              at: t.closedAt.toISOString(),
+              review: closureReviewOf(t)!,
+              reviewedBy: t.humanReviewedBy ? (userMap.get(t.humanReviewedBy) ?? unknownUser(t.humanReviewedBy)) : null,
+              reviewedAt: iso(t.humanReviewedAt),
+            }
+          : null,
     };
   });
 }
@@ -135,7 +145,14 @@ export async function serializeReviews(db: Db, rows: ReviewRow[]): Promise<Revie
       const taskIds = unique(rows.map((r) => r.taskId));
       if (!taskIds.length) return [];
       return db
-        .select({ id: tasks.id, number: tasks.number, title: tasks.title, status: tasks.status, key: projects.key })
+        .select({
+          id: tasks.id,
+          number: tasks.number,
+          title: tasks.title,
+          status: tasks.status,
+          humanReviewedBy: tasks.humanReviewedBy,
+          key: projects.key,
+        })
         .from(tasks)
         .innerJoin(projects, eq(projects.id, tasks.projectId))
         .where(inArray(tasks.id, taskIds));
@@ -159,7 +176,9 @@ export async function serializeReviews(db: Db, rows: ReviewRow[]): Promise<Revie
       status: r.status,
       createdBy: userMap.get(r.createdBy) ?? unknownUser(r.createdBy),
       owner: userMap.get(r.ownerId) ?? unknownUser(r.ownerId),
-      task: t ? { id: t.id, ref: taskRef(t.key, t.number), title: t.title, status: t.status } : null,
+      task: t
+        ? { id: t.id, ref: taskRef(t.key, t.number), title: t.title, status: t.status, closureReview: closureReviewOf(t) }
+        : null,
       assetCount: Number(a?.n ?? 0),
       commentCount: Number(c?.n ?? 0),
       openCommentCount: Number(c?.open ?? 0),
@@ -184,14 +203,22 @@ export async function serializeComments(db: Db, rows: CommentRow[]): Promise<Rev
       .where(inArray(reviews.id, reviewIds)),
     taskIds.length
       ? db
-          .select({ id: tasks.id, number: tasks.number, status: tasks.status, key: projects.key })
+          .select({
+            id: tasks.id,
+            number: tasks.number,
+            status: tasks.status,
+            humanReviewedBy: tasks.humanReviewedBy,
+            key: projects.key,
+          })
           .from(tasks)
           .innerJoin(projects, eq(projects.id, tasks.projectId))
           .where(inArray(tasks.id, taskIds))
       : Promise.resolve([]),
   ]);
   const refBy = new Map(reviewRows.map((r) => [r.id, reviewRef(r.key, r.number)]));
-  const taskBy = new Map(taskRows.map((t) => [t.id, { id: t.id, ref: taskRef(t.key, t.number), status: t.status }]));
+  const taskBy = new Map(
+    taskRows.map((t) => [t.id, { id: t.id, ref: taskRef(t.key, t.number), status: t.status, closureReview: closureReviewOf(t) }]),
+  );
   return rows.map((c) => ({
     id: c.id,
     reviewId: c.reviewId,

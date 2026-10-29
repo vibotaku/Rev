@@ -41,9 +41,17 @@ export function describeAnnotation(annotation: Annotation | null) {
     .join("; ");
 }
 
+/** "Done", "Done (agent-closed, not reviewed)" or "Done (reviewed by Alice)". */
+export function statusLabel(t: Pick<TaskInfo, "status" | "closure">) {
+  const label = TASK_STATUS_LABELS[t.status];
+  if (!t.closure) return label;
+  if (t.closure.review === "agent") return `${label} (agent-closed, not reviewed)`;
+  return t.closure.by.id === t.closure.reviewedBy?.id ? label : `${label} (reviewed by ${t.closure.reviewedBy?.name})`;
+}
+
 export function formatTaskLine(t: TaskInfo) {
   const prio = t.priority !== "none" ? ` [${t.priority}]` : "";
-  return `${t.ref.padEnd(10)} ${TASK_STATUS_LABELS[t.status].padEnd(12)}${prio} ${t.title}`;
+  return `${t.ref.padEnd(10)} ${statusLabel(t).padEnd(12)}${prio} ${t.title}`;
 }
 
 export function formatComment(
@@ -64,7 +72,10 @@ export function formatComment(
   const shapes = describeAnnotation(c.annotation);
   if (shapes) lines.push(`${indent}    annotation: ${shapes}`);
   if (c.snapshotUrl) lines.push(`${indent}    snapshot: ${api.url(c.snapshotUrl)}`);
-  if (c.task) lines.push(`${indent}    task: ${c.task.ref} (${TASK_STATUS_LABELS[c.task.status]})`);
+  if (c.task) {
+    const agentClosed = c.task.closureReview === "agent" ? ", agent-closed" : "";
+    lines.push(`${indent}    task: ${c.task.ref} (${TASK_STATUS_LABELS[c.task.status]}${agentClosed})`);
+  }
   for (const r of replies) {
     lines.push(`${indent}    ↳ ${who(r.author)}: ${r.body.replace(/\n+/g, " ")} (comment ${r.id})`);
   }
@@ -74,7 +85,7 @@ export function formatComment(
 export function formatTask(api: RevApi, t: TaskDetail, assetNames = new Map<string, string>()) {
   const lines = [
     `${t.ref}: ${t.title}`,
-    `Status: ${TASK_STATUS_LABELS[t.status]} · Priority: ${t.priority} · Assignee: ${who(t.assignee)} · Created by: ${who(t.createdBy)}`,
+    `Status: ${statusLabel(t)} · Priority: ${t.priority} · Assignee: ${who(t.assignee)} · Created by: ${who(t.createdBy)}`,
     `URL: ${api.webUrl("tasks", t.projectKey, t.number)}`,
   ];
   if (t.sourceReview) lines.push(`From review: ${t.sourceReview.ref} — ${t.sourceReview.title}`);

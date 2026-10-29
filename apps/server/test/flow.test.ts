@@ -225,7 +225,6 @@ describe("Rev end-to-end flow", () => {
     expect((await aliceBot.get(detail.json.sourceComments[0].snapshotUrl)).status).toBe(200);
 
     expect((await aliceBot.patch(`/api/tasks/${taskRef}`, { title: "renamed" })).status).toBe(403);
-    expect((await aliceBot.patch(`/api/tasks/${taskRef}`, { status: "done" })).status).toBe(403);
     expect((await bobBot.patch(`/api/tasks/${taskRef}`, { status: "in_progress" })).status).toBe(403);
     expect((await aliceBot.patch(`/api/tasks/${taskRef}`, { status: "in_progress" })).json.status).toBe("in_progress");
     expect((await aliceBot.post(`/api/tasks/${taskRef}/comments`, { body: "Working on it" })).status).toBe(200);
@@ -240,12 +239,49 @@ describe("Rev end-to-end flow", () => {
 
     await alice.patch("/api/reviews/WEB-R2", { status: "approved" });
     const done = (await alice.patch(`/api/tasks/${taskRef}`, { status: "done" })).json as TaskDetail;
-    expect(done.completedAt).toBeTruthy();
+    // A human closing the task is its human review.
+    expect(done.closure).toMatchObject({ review: "human", by: { name: "Alice" }, reviewedBy: { name: "Alice" } });
+    expect(done.can.reviewClosure).toBe(false);
     expect(done.sourceComments[0]!.status).toBe("resolved");
     expect(done.activity.map((a) => a.kind)).toEqual(["created", "status", "comment", "review", "status", "status"]);
 
     const dash = (await alice.get("/api/dashboard")).json;
     expect(dash.reviewsToDecide.map((r: any) => r.ref)).toEqual(["WEB-R1"]);
+  });
+
+  it("keeps agent closures distinct until a human reviews them", async () => {
+    // Feedback on the delivery becomes a new task for the agent, which closes it itself.
+    const comment = await bob.post("/api/reviews/WEB-R2/comments", { body: "Tiny copy fix" });
+    const created = await alice.post("/api/reviews/WEB-R2/tasks", {
+      title: "Copy fix",
+      commentIds: [comment.json.id],
+      assigneeId: aliceBotId,
+    });
+    const ref = created.json.ref;
+    const closed = (await aliceBot.patch(`/api/tasks/${ref}`, { status: "done" })).json as TaskDetail;
+    expect(closed.closure).toMatchObject({ review: "agent", by: { id: aliceBotId, kind: "agent" }, reviewedBy: null });
+    expect(closed.sourceComments[0]).toMatchObject({ status: "resolved", task: { ref, closureReview: "agent" } });
+
+    const review = (await alice.get("/api/reviews/WEB-R2")).json as ReviewDetail;
+    expect(review.tasks.find((t) => t.ref === ref)?.closureReview).toBe("agent");
+    expect((await alice.get("/api/dashboard")).json.agentClosuresToReview.map((t: any) => t.ref)).toEqual([ref]);
+    expect((await bob.get("/api/dashboard")).json.agentClosuresToReview).toEqual([]);
+
+    // Only humans can review a closure, once.
+    expect((await alice.get(`/api/tasks/${ref}`)).json.can.reviewClosure).toBe(true);
+    expect((await aliceBot.post(`/api/tasks/${ref}/review-closure`, {})).status).toBe(403);
+    const reviewed = (await alice.post(`/api/tasks/${ref}/review-closure`, { body: "Checked on staging" })).json as TaskDetail;
+    expect(reviewed.closure).toMatchObject({ review: "human", by: { id: aliceBotId }, reviewedBy: { name: "Alice" } });
+    expect(reviewed.activity.at(-1)).toMatchObject({ kind: "closure_reviewed", body: "Checked on staging" });
+    expect((await alice.post(`/api/tasks/${ref}/review-closure`, {})).status).toBe(409);
+    expect((await alice.get("/api/dashboard")).json.agentClosuresToReview).toEqual([]);
+
+    // Reopening clears the closure; closing again starts a fresh, unreviewed one.
+    expect(((await aliceBot.patch(`/api/tasks/${ref}`, { status: "in_progress" })).json as TaskDetail).closure).toBeNull();
+    const cancelled = (await aliceBot.patch(`/api/tasks/${ref}`, { status: "cancelled" })).json as TaskDetail;
+    expect(cancelled.closure).toMatchObject({ review: "agent", reviewedBy: null });
+    expect(cancelled.activity.filter((a) => a.kind === "status").at(-1)?.data).toMatchObject({ to: "cancelled", byKind: "agent" });
+    expect((await alice.post(`/api/tasks/${ref}/review-closure`, {})).status).toBe(200);
   });
 
   it("rejects cross-origin cookie requests", async () => {

@@ -5,9 +5,10 @@
 //                member (creates/edits tasks and reviews, comments),
 //                viewer (read only).
 // Agents are capped regardless of role: they can submit reviews, comment, and
-// work on tasks assigned to them, but never decide on reviews, create tasks,
-// assign work, or manage anything. Only an agent's linked human (or a project
-// owner/admin) can assign work to that agent.
+// work on tasks assigned to them (including closing them), but never decide on
+// reviews, create tasks, assign work, or manage anything. Only an agent's linked
+// human (or a project owner/admin) can assign work to that agent. Tasks an agent
+// closes stay flagged as agent-reviewed until a human reviews the closure.
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { ProjectRole } from "@rev/shared";
 import type { Db } from "../db";
@@ -60,10 +61,13 @@ export function projectPerms(actor: Actor, role: ProjectRole | null, project: Pr
 export function taskPerms(actor: Actor, role: ProjectRole | null, task: Task) {
   const human = actor.kind === "human";
   const edit = human && isWriter(role);
+  const closed = task.status === "done" || task.status === "cancelled";
   return {
     edit,
+    // Agents may move their own tasks through every status, including closing them.
     updateStatus: edit || (isWriter(role) && task.assigneeId === actor.id),
     comment: isWriter(role),
+    reviewClosure: edit && closed && !task.humanReviewedBy,
   };
 }
 

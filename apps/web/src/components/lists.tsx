@@ -2,7 +2,7 @@ import { Film, MessageSquare } from "lucide-react";
 import { Link } from "react-router";
 import type { ReviewInfo, TaskInfo } from "@rev/shared";
 import { reviewPath, taskPath, timeAgo } from "../lib";
-import { PriorityMark, ReviewStatusBadge, TaskStatusBadge, UserChip } from "./ui";
+import { closureTitle, PriorityMark, ReviewStatusBadge, TaskStatusBadge, UserChip } from "./ui";
 
 export function TaskRow({ task, showProject }: { task: TaskInfo; showProject?: boolean }) {
   return (
@@ -11,7 +11,7 @@ export function TaskRow({ task, showProject }: { task: TaskInfo; showProject?: b
       <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
       {showProject && task.sourceReview && <span className="hidden text-xs text-zinc-400 md:inline">from {task.sourceReview.ref}</span>}
       <PriorityMark priority={task.priority} />
-      <TaskStatusBadge status={task.status} />
+      <TaskStatusBadge status={task.status} closureReview={task.closure?.review} title={closureTitle(task.closure)} />
       <span className="hidden w-44 shrink-0 overflow-hidden md:flex">
         <UserChip user={task.assignee} />
       </span>

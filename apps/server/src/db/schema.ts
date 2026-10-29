@@ -20,6 +20,7 @@ import type {
   GlobalRole,
   ProjectRole,
   ReviewStatus,
+  TaskActivityInfo,
   TaskPriority,
   TaskStatus,
   UserKind,
@@ -143,10 +144,17 @@ export const tasks = pgTable(
     sourceReviewId: uuid("source_review_id").references((): AnyPgColumn => reviews.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
-    completedAt: ts("completed_at"),
+    /** When the task entered done/cancelled (column predates cancelled closures). */
+    closedAt: ts("completed_at"),
+    /** Who closed it: a human, or an agent closing its own task. */
+    closedBy: uuid("closed_by").references(() => users.id, { onDelete: "set null" }),
+    /** The human who reviewed the closure; null means only an agent has looked at it. */
+    humanReviewedBy: uuid("human_reviewed_by").references(() => users.id, { onDelete: "set null" }),
+    humanReviewedAt: ts("human_reviewed_at"),
   },
   (t) => [
     uniqueIndex("tasks_project_number_idx").on(t.projectId, t.number),
+    index("tasks_closed_by_idx").on(t.closedBy),
     index("tasks_project_status_idx").on(t.projectId, t.status),
     index("tasks_assignee_idx").on(t.assigneeId),
   ],
@@ -162,7 +170,7 @@ export const taskActivity = pgTable(
     actorId: uuid("actor_id")
       .notNull()
       .references(() => users.id),
-    kind: text("kind").$type<"created" | "comment" | "status" | "assign" | "priority" | "review">().notNull(),
+    kind: text("kind").$type<TaskActivityInfo["kind"]>().notNull(),
     body: text("body").notNull().default(""),
     data: jsonb("data").$type<Record<string, unknown>>(),
     createdAt: createdAt(),

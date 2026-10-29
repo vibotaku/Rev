@@ -324,14 +324,23 @@ export function ReviewPage() {
           </span>
           {review.task && (
             <Link to={taskPath(review.task.ref)} className="flex items-center gap-1 hover:underline">
-              Delivers <span className="font-mono">{review.task.ref}</span> <TaskStatusBadge status={review.task.status} />
+              Delivers <span className="font-mono">{review.task.ref}</span>{" "}
+              <TaskStatusBadge status={review.task.status} closureReview={review.task.closureReview} />
             </Link>
           )}
           {review.tasks.length > 0 && (
             <span className="flex items-center gap-1">
               Follow-up tasks:
               {review.tasks.map((t) => (
-                <Link key={t.id} to={taskPath(t.ref)} className="font-mono text-accent-700 hover:underline">
+                <Link
+                  key={t.id}
+                  to={taskPath(t.ref)}
+                  className={cx(
+                    "font-mono hover:underline",
+                    t.closureReview === "agent" ? "rounded border border-dashed border-violet-400 px-1 text-violet-700" : "text-accent-700",
+                  )}
+                  title={t.closureReview === "agent" ? "Closed by an agent — not yet reviewed by a human" : undefined}
+                >
                   {t.ref}
                 </Link>
               ))}

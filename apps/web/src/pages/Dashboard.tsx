@@ -42,6 +42,17 @@ export function Dashboard() {
                 ))}
               </div>
             </Section>
+            <Section
+              title="Closed by your agents — waiting for a human review"
+              count={data.agentClosuresToReview.length}
+              empty="Nothing your agents closed is waiting for review."
+            >
+              <div className="divide-y divide-violet-100 rounded-lg border border-dashed border-violet-400 bg-white shadow-sm">
+                {data.agentClosuresToReview.map((t) => (
+                  <TaskRow key={t.id} task={t} showProject />
+                ))}
+              </div>
+            </Section>
             <Section title="Your agents are working on" count={data.myAgentsTasks.length} empty="Your agents have no open tasks.">
               <Card className="divide-y divide-zinc-100">
                 {data.myAgentsTasks.map((t) => (

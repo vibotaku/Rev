@@ -79,7 +79,7 @@ export function CommentCard({
           {comment.task && (
             <Link to={taskPath(comment.task.ref)} className="mt-1 inline-flex items-center gap-1.5 text-xs text-accent-700 hover:underline">
               <ListTodo className="size-3.5" /> {comment.task.ref}
-              <TaskStatusBadge status={comment.task.status} />
+              <TaskStatusBadge status={comment.task.status} closureReview={comment.task.closureReview} />
             </Link>
           )}
           {comment.decidedBy && comment.status !== "open" && (

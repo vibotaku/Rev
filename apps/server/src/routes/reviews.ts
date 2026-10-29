@@ -25,7 +25,7 @@ import { requireActor, type Actor } from "../lib/auth";
 import { badRequest, conflict, forbidden, HttpError, notFound, parse } from "../lib/errors";
 import { resolveReview, resolveTask } from "../lib/refs";
 import { serializeAsset, serializeComments, serializeReviews, reviewAssetsOf, loadUsers } from "../lib/serialize";
-import { insertTask, nextNumber } from "../lib/tasks";
+import { closureReviewOf, insertTask, nextNumber } from "../lib/tasks";
 import { taskDetail } from "./tasks";
 
 const SNAPSHOT_MAX_BYTES = 15 * 1024 * 1024;
@@ -49,6 +49,7 @@ async function reviewDetail(ctx: AppContext, actor: Actor, ref: string): Promise
       ref: taskRef(project.key, t.number),
       title: t.title,
       status: t.status,
+      closureReview: closureReviewOf(t),
       assignee: t.assigneeId ? (assignees.get(t.assigneeId) ?? null) : null,
     })),
     can: { ...perms, assignableUserIds: assignable },

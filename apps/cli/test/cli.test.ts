@@ -214,7 +214,12 @@ describe("CLI commands", () => {
     expect((await admin.get("/api/tasks/WEB-1")).json.status).toBe("in_review");
 
     expect((await cli(["task", "ready", "WEB-1", "--note", "Shipped"], env)).out).toBe("WEB-1 → in_review");
-    await expect(cli(["task", "status", "WEB-1", "done"], env)).rejects.toThrow();
+    expect((await cli(["task", "done", "WEB-1", "--note", "Verified on staging"], env)).out).toBe(
+      "WEB-1 → done (agent-closed until a human reviews it)",
+    );
+    expect((await cli(["tasks", "--all-statuses"], env)).out).toMatch(/WEB-1\s+Done \(agent-closed, not reviewed\)/);
+    const closed = (await admin.get("/api/tasks/WEB-1")).json;
+    expect(closed.closure).toMatchObject({ review: "agent", by: { kind: "agent" } });
     expect((await cli(["review", "reply", commentId, "ack", "--review", "WEB-R1"], env)).out).toContain("Replied on WEB-R1");
     await expect(cli(["task", "status", "WEB-1", "bogus"], env)).rejects.toThrow();
   });

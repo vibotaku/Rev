@@ -20,8 +20,14 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   cancelled: "Cancelled",
 };
 
-/** Statuses an agent may set on its own tasks. Done/cancelled are human decisions. */
-export const AGENT_TASK_STATUSES = ["todo", "in_progress", "in_review"] as const satisfies readonly TaskStatus[];
+export const CLOSED_TASK_STATUSES = ["done", "cancelled"] as const satisfies readonly TaskStatus[];
+export const isClosedStatus = (s: TaskStatus) => s === "done" || s === "cancelled";
+
+/**
+ * Whether a closed task's closure was seen by a human. Agents may close their own
+ * tasks; such closures stay "agent" until a human closes or reviews the task.
+ */
+export type ClosureReview = "human" | "agent";
 
 export const TASK_PRIORITIES = ["none", "low", "medium", "high", "urgent"] as const;
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
@@ -280,12 +286,22 @@ export interface TaskInfo {
   sourceReview: { id: string; ref: string; title: string } | null;
   createdAt: string;
   updatedAt: string;
-  completedAt: string | null;
+  /** Set while the task is done or cancelled. */
+  closure: TaskClosure | null;
+}
+
+export interface TaskClosure {
+  by: UserSummary;
+  at: string;
+  review: ClosureReview;
+  /** The human who closed the task, or who later reviewed an agent's closure. */
+  reviewedBy: UserSummary | null;
+  reviewedAt: string | null;
 }
 
 export interface TaskActivityInfo {
   id: string;
-  kind: "created" | "comment" | "status" | "assign" | "priority" | "review";
+  kind: "created" | "comment" | "status" | "assign" | "priority" | "review" | "closure_reviewed";
   actor: UserSummary;
   body: string;
   data: Record<string, unknown> | null;
@@ -298,7 +314,14 @@ export interface TaskDetail extends TaskInfo {
   /** Reviews submitted to deliver this task. */
   deliveries: { id: string; ref: string; title: string; status: ReviewStatus; createdAt: string }[];
   activity: TaskActivityInfo[];
-  can: { edit: boolean; updateStatus: boolean; comment: boolean; assignableUserIds: string[] };
+  can: {
+    edit: boolean;
+    updateStatus: boolean;
+    comment: boolean;
+    /** Mark an agent's closure as reviewed by a human. */
+    reviewClosure: boolean;
+    assignableUserIds: string[];
+  };
 }
 
 export interface ReviewAssetInfo {
@@ -333,7 +356,7 @@ export interface ReviewCommentInfo {
   status: CommentStatus;
   decidedBy: UserSummary | null;
   decidedAt: string | null;
-  task: { id: string; ref: string; status: TaskStatus } | null;
+  task: { id: string; ref: string; status: TaskStatus; closureReview: ClosureReview | null } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -348,7 +371,7 @@ export interface ReviewInfo {
   status: ReviewStatus;
   createdBy: UserSummary;
   owner: UserSummary;
-  task: { id: string; ref: string; title: string; status: TaskStatus } | null;
+  task: { id: string; ref: string; title: string; status: TaskStatus; closureReview: ClosureReview | null } | null;
   assetCount: number;
   commentCount: number;
   openCommentCount: number;
@@ -361,7 +384,14 @@ export interface ReviewInfo {
 export interface ReviewDetail extends ReviewInfo {
   assets: ReviewAssetInfo[];
   comments: ReviewCommentInfo[];
-  tasks: { id: string; ref: string; title: string; status: TaskStatus; assignee: UserSummary | null }[];
+  tasks: {
+    id: string;
+    ref: string;
+    title: string;
+    status: TaskStatus;
+    closureReview: ClosureReview | null;
+    assignee: UserSummary | null;
+  }[];
   can: {
     edit: boolean;
     comment: boolean;
@@ -374,6 +404,8 @@ export interface ReviewDetail extends ReviewInfo {
 
 export interface DashboardInfo {
   myTasks: TaskInfo[];
+  /** Tasks your agents closed that no human has reviewed yet. */
+  agentClosuresToReview: TaskInfo[];
   reviewsToDecide: ReviewInfo[];
   myAgentsTasks: TaskInfo[];
   recentReviews: ReviewInfo[];

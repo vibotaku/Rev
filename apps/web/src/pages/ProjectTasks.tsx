@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Columns3, List, Plus, Search } from "lucide-react";
+import { Bot, Columns3, List, Plus, Search, UserCheck } from "lucide-react";
 import { Link, useOutletContext } from "react-router";
 import {
   TASK_PRIORITIES,
@@ -16,7 +16,7 @@ import {
 import { api } from "../api";
 import { useUser } from "../auth";
 import { TaskRow } from "../components/lists";
-import { Avatar, Button, Card, EmptyState, ErrorBox, Field, Input, Modal, PageLoader, PriorityMark, Select, Textarea } from "../components/ui";
+import { Avatar, Button, Card, closureTitle, EmptyState, ErrorBox, Field, Input, Modal, PageLoader, PriorityMark, Select, Textarea } from "../components/ui";
 import { cx, taskPath } from "../lib";
 import { useMembers } from "./Project";
 
@@ -69,6 +69,7 @@ export function ProjectTasks() {
         if (filter === "me" && t.assignee?.id !== me.id) return false;
         if (filter === "agents" && t.assignee?.kind !== "agent") return false;
         if (filter === "unassigned" && t.assignee) return false;
+        if (filter === "agent-closed" && t.closure?.review !== "agent") return false;
         if (q && !`${t.ref} ${t.title}`.toLowerCase().includes(q)) return false;
         return true;
       })
@@ -106,6 +107,7 @@ export function ProjectTasks() {
           <option value="me">Assigned to me</option>
           <option value="agents">Assigned to agents</option>
           <option value="unassigned">Unassigned</option>
+          <option value="agent-closed">Closed by agents, not reviewed</option>
         </Select>
         <div className="ml-auto flex items-center gap-1 rounded-md border border-zinc-300 bg-white p-0.5">
           <button
@@ -142,6 +144,7 @@ export function ProjectTasks() {
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-8 pb-6">
           {[...BOARD, ...(showCancelled ? (["cancelled"] as TaskStatus[]) : [])].map((status) => {
             const column = filtered.filter((t) => t.status === status);
+            const unreviewed = column.filter((t) => t.closure?.review === "agent").length;
             return (
               <div
                 key={status}
@@ -151,7 +154,17 @@ export function ProjectTasks() {
               >
                 <div className="flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-600">
                   <span>{TASK_STATUS_LABELS[status]}</span>
-                  <span className="text-zinc-400">{column.length}</span>
+                  <span className="flex items-center gap-1.5">
+                    {unreviewed > 0 && (
+                      <span
+                        className="flex items-center gap-1 rounded-full border border-dashed border-violet-400 bg-violet-50 px-1.5 text-[10px] text-violet-700"
+                        title="Closed by agents, not yet reviewed by a human"
+                      >
+                        <Bot className="size-3" /> {unreviewed} to review
+                      </span>
+                    )}
+                    <span className="text-zinc-400">{column.length}</span>
+                  </span>
                 </div>
                 <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
                   {column.map((t) => (
@@ -167,7 +180,16 @@ export function ProjectTasks() {
                       }}
                       className={cx(dragging === t.id && "opacity-40")}
                     >
-                      <Link to={taskPath(t.ref)} className="block rounded-md border border-zinc-200 bg-white p-2.5 shadow-sm hover:border-zinc-300">
+                      <Link
+                        to={taskPath(t.ref)}
+                        title={closureTitle(t.closure)}
+                        className={cx(
+                          "block rounded-md border p-2.5 shadow-sm",
+                          t.closure?.review === "agent"
+                            ? "border-dashed border-violet-400 bg-violet-50/60 hover:border-violet-500"
+                            : "border-zinc-200 bg-white hover:border-zinc-300",
+                        )}
+                      >
                         <div className="flex items-center gap-2 text-xs text-zinc-500">
                           <span className="font-mono">{t.ref}</span>
                           <PriorityMark priority={t.priority} />
@@ -175,6 +197,16 @@ export function ProjectTasks() {
                           <span className="ml-auto">{t.assignee && <Avatar user={t.assignee} size="sm" />}</span>
                         </div>
                         <div className="mt-1 text-sm leading-snug">{t.title}</div>
+                        {t.closure?.review === "agent" && (
+                          <div className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-violet-700">
+                            <Bot className="size-3" /> Closed by {t.closure.by.name} · not reviewed
+                          </div>
+                        )}
+                        {t.closure?.review === "human" && (
+                          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-emerald-700">
+                            <UserCheck className="size-3" /> {t.closure.reviewedBy?.name ?? t.closure.by.name}
+                          </div>
+                        )}
                       </Link>
                     </div>
                   ))}

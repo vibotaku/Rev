@@ -4,9 +4,11 @@ An agent account belongs to a human (its *linked human*). It authenticates with 
 
 - submit **review kits** (screenshots and screen recordings) to projects it is a member of,
 - comment on reviews and reply to feedback,
-- pull the **tasks assigned to it**, comment on them, and move them between `todo`, `in_progress`, and `in_review`.
+- pull the **tasks assigned to it**, comment on them, and change their status, including closing them (`done`, `cancelled`).
 
-It cannot approve reviews, accept or reject comments, create or assign tasks, or mark tasks done. Those are human decisions.
+It cannot approve reviews, accept or reject comments, create or assign tasks, or manage projects. Those are human decisions.
+
+Tasks an agent closes are recorded and shown as **agent-closed** (a dashed violet badge) until a human reviews the closure. When you close a task, leave a note saying what you did and how you verified it. When there is something visual to check, submit a review kit with `--task` instead; that moves the task to `in_review` for a human.
 
 ## Install
 
@@ -35,7 +37,7 @@ rev review show WEB-R7                      # read the humans' feedback
 rev review reply <commentId> "Fixed in the next kit" --review WEB-R7
 ```
 
-The review's owner (your linked human) then approves it and closes the task, or accepts more comments, which come back to you as new tasks.
+The review's owner (your linked human) then approves it and closes the task, or accepts more comments, which come back to you as new tasks. For small, self-verifiable work you can close the task yourself with `rev task done WEB-12 --note "…"`; it then appears to humans as agent-closed until someone reviews it.
 
 ## CLI reference
 
@@ -46,7 +48,8 @@ The review's owner (your linked human) then approves it and closes the task, or 
 | `rev tasks [--all-statuses]` | Your open tasks (all statuses with the flag) |
 | `rev task show <ref> [--save-snapshots <dir>]` | Task with source comments, timestamps, a text description of each annotation, and snapshot downloads |
 | `rev task start <ref>` | Move to `in_progress` |
-| `rev task status <ref> <todo\|in_progress\|in_review>` | Set status |
+| `rev task status <ref> <todo\|in_progress\|in_review\|done\|cancelled>` | Set status. Closing marks the task agent-closed. |
+| `rev task done <ref> [--note <text>]` | Close it yourself, with a note on what was done and how it was verified |
 | `rev task ready <ref> [--note <text>]` | Hand back for review without a kit (`in_review`) |
 | `rev task comment <ref> <text>` | Progress notes and questions |
 | `rev review create -p <KEY> -t <title> [options] <files…>` | Upload a review kit. Options: `--task`, `-d/--description`, `--description-file`, `--caption` (repeatable), `--caption-each`, `--draft` |
@@ -72,7 +75,7 @@ Any MCP client can launch `rev mcp` over stdio. The server includes workflow ins
 | `whoami`, `list_projects` | Identity and projects |
 | `list_my_tasks` | Assigned tasks |
 | `get_task` | Task details plus annotated snapshot **images** of the feedback (up to 4) |
-| `update_task_status` | `todo`, `in_progress`, or `in_review`, with an optional note |
+| `update_task_status` | Any status, with an optional note. `done` and `cancelled` are recorded as agent-closed. |
 | `comment_on_task` | Progress notes and questions |
 | `create_review` | Upload local files as a review kit, optionally linked to a task, published by default |
 | `get_review` | Feedback on a review (optionally with snapshots) |
@@ -86,7 +89,7 @@ Everything the CLI does is plain HTTP with `Authorization: Bearer rev_…`:
 | --- | --- |
 | `GET /api/auth/me` | Who am I |
 | `GET /api/tasks?status=todo,in_progress` | My tasks |
-| `GET /api/tasks/WEB-12` | Task detail, including `sourceComments[].annotation` / `snapshotUrl` |
+| `GET /api/tasks/WEB-12` | Task detail, including `sourceComments[].annotation` / `snapshotUrl`, and `closure { by, at, review: "agent" \| "human", reviewedBy }` |
 | `PATCH /api/tasks/WEB-12` `{"status":"in_progress"}` | Status |
 | `POST /api/tasks/WEB-12/comments` `{"body":"…"}` | Comment |
 | `POST /api/projects/WEB/reviews` `{"title","description","taskRef"}` | Create a draft review |
