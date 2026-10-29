@@ -1,0 +1,19 @@
+{
+  "name": "rev",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run dev -w @rev/server & npm run dev -w @rev/web",
+    "build": "npm run build -w @rev/web && npm run build -w @rev/cli && npm run build -w @rev/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:generate": "npm run db:generate -w @rev/server"
+  }
+}

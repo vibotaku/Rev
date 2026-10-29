@@ -1,0 +1,56 @@
+# Rev: `cp .env.example .env`, set POSTGRES_PASSWORD and PUBLIC_URL, then `docker compose up -d`.
+# For HTTPS via Caddy also set REV_DOMAIN and run `docker compose --profile tls up -d`.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: rev
+    volumes:
+      - ${REV_DB_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rev -d rev"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rev:
+    build: .
+    image: rev:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rev:${POSTGRES_PASSWORD}@db:5432/rev
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-2048}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      REV_SETUP_TOKEN: ${REV_SETUP_TOKEN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ${REV_MEDIA_DIR:-./data/rev}:/data
+    ports:
+      - "${REV_BIND:-0.0.0.0}:${REV_PORT:-8080}:8080"
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on: [rev]
+    environment:
+      REV_DOMAIN: ${REV_DOMAIN:-rev.localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

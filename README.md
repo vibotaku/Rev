@@ -1,0 +1,120 @@
+# Rev
+
+Task management and visual review for teams of humans and coding agents.
+
+Agents submit **review kits** (screen recordings and screenshots) with one CLI command or MCP tool call. Humans scrub through the videos, draw on frames, and comment. The review's human owner accepts the feedback that matters, turns it into tasks, and assigns them back to the agent linked to them. The agent pulls those tasks along with the annotated frames and delivers the next review kit.
+
+```
+agent ──rev review create──▶ review kit ──humans annotate & comment──▶ owner accepts comments
+  ▲                                                                          │
+  └────────── rev tasks / MCP get_task (with annotated snapshots) ◀── task assigned to linked agent
+```
+
+## Features
+
+- **Projects and tasks.** Board and list views, priorities, assignees, activity, and markdown comments. References look like `WEB-12`.
+- **Review kits.** Videos and images in one review (`WEB-R3`). Uploads are probed with ffmpeg, get posters, and are transcoded to H.264 when browsers can't play them (`.mov`, `.mkv`, HEVC).
+- **Annotation.** Pins, boxes, arrows, and freehand drawing on any video frame or image. Comments carry timestamps and appear as timeline markers. Frame stepping, playback speed, and keyboard shortcuts are built in.
+- **Snapshots for agents.** Each annotated comment stores a rendered JPEG of the exact frame with the marks drawn on it. `rev task show` and the MCP `get_task` tool hand those images to the agent.
+- **Review → task hand-off.** The owner selects comments and creates one task from them. The comments are marked accepted, and the task is assigned to the agent that submitted the review by default. When the task is done, its comments become resolved.
+- **Auth and privileges.** Email/password accounts (invite-only), scoped agent API tokens, and global and per-project roles. See [Permissions](#permissions).
+- **Agent tooling.** A single-file `rev` CLI, served by your Rev instance at `/downloads/rev.mjs`, which also runs as an MCP server (`rev mcp`).
+- **Easy to self-host.** One `docker compose up -d` brings up Rev, Postgres, and ffmpeg. See the [Proxmox guide](docs/deploy-proxmox.md).
+
+## Quick start (Proxmox / any Debian host)
+
+```bash
+git clone https://github.com/VibOtaku/rev.git /opt/rev && cd /opt/rev
+sudo PUBLIC_URL=http://rev.lan:8080 ./deploy/install.sh
+```
+
+The script installs Docker if it is missing, writes `.env` with a random database password, builds and starts the stack, and prints the **setup token**. Open `PUBLIC_URL/setup` to create the first admin. Full walkthrough (LXC settings, storage for media, HTTPS, backups, upgrades): **[docs/deploy-proxmox.md](docs/deploy-proxmox.md)**.
+
+## Connecting an agent
+
+1. In Rev, go to **My agents → New agent**. Copy the token; it is shown once.
+2. Open a project's **Members** tab and add the agent.
+3. On the agent's machine (Node.js 20 or later):
+
+```bash
+mkdir -p ~/.local/bin && curl -fsSL https://rev.example.com/downloads/rev.mjs -o ~/.local/bin/rev && chmod +x ~/.local/bin/rev
+rev login --url https://rev.example.com --token rev_…
+claude mcp add rev -- rev mcp        # Claude Code / any MCP client
+rev review create -p WEB -t "New onboarding flow" --task WEB-12 recording.mp4 screenshot.png
+```
+
+See **[docs/agents.md](docs/agents.md)** for every CLI command and MCP tool.
+
+## Concepts
+
+| Thing | Notes |
+| --- | --- |
+| **User** | A human (email + password) or an **agent** (API tokens only). Each agent is *linked* to the human who created it and acts on their behalf. |
+| **Project** | Has a short key (`WEB`) and members with a project role. |
+| **Task** | `WEB-12`. Statuses: `todo → in_progress → in_review → done` (or `cancelled`). |
+| **Review** | `WEB-R3`. A kit of media plus a description, optionally delivering a task. Statuses: `draft → open → changes_requested / approved → closed`. |
+| **Review owner** | The human who decides on a review. When an agent submits one, the owner is the agent's linked human. |
+| **Comment** | On a review, optionally on a media item, at a timestamp, with an annotation. Statuses: `open → accepted / rejected → resolved`. |
+
+## Permissions
+
+Global roles: **admin** (manages people, acts as owner of every project) and **member**. Project roles: **owner**, **member**, **viewer**.
+
+| Action | Who |
+| --- | --- |
+| Invite people, reset passwords, disable accounts | Admins |
+| Create projects | Any human |
+| Add or remove project members, change roles, archive | Project owners. Members may add or remove *their own* agents. |
+| Create and edit tasks | Human owners and members |
+| Assign a task to a human | Human owners and members (assignee must be a non-viewer member) |
+| Assign a task to an **agent** | The agent's **linked human**, or a project owner or admin |
+| Change a task's status | Human owners and members. An agent can only move **its own** tasks between `todo`, `in_progress`, and `in_review`. |
+| Create review kits, upload media | Owners and members, humans or agents. Agents can only link reviews to tasks assigned to them. |
+| Comment, reply, annotate | Owners and members |
+| Accept or reject comments, approve or request changes, **create tasks from a review** | The review **owner**, or a project owner (humans only) |
+| See draft reviews | The submitter, the review owner, and project owners |
+| Download media and snapshots | Anyone who can see the review |
+
+Disabling a person immediately disables every agent linked to them. Revoking a token takes effect on the next request.
+
+## Development
+
+Requirements: Node.js 22+ (24 recommended) and ffmpeg (optional; used for posters and transcoding).
+
+```bash
+npm install
+npm run dev          # API on :8080 (embedded PGlite in ./data), web UI on http://localhost:5173
+npm run typecheck
+npm test             # server + CLI integration tests (PGlite; ffmpeg required for media tests)
+TEST_DATABASE_URL=postgres://… npx vitest run   # in apps/server: run the server suite on real Postgres
+npm run build        # web → apps/web/dist, CLI → apps/cli/dist/rev.mjs, server → apps/server/dist
+```
+
+The server prints a setup token on first start. In development you can pin it with `REV_SETUP_TOKEN=dev npm run dev`.
+
+After changing `apps/server/src/db/schema.ts`, run `npm run db:generate` and commit the new migration in `apps/server/drizzle/`. Migrations run automatically at startup.
+
+### Layout
+
+```
+packages/shared   zod request schemas, DTO types, enums shared by every app
+apps/server       Fastify API, auth, permissions (src/lib/access.ts), media processing, Drizzle schema + migrations
+apps/web          React + Vite + Tailwind UI (review workspace in src/review/)
+apps/cli          `rev` CLI and MCP server, bundled into one file
+deploy/           install / backup / restore scripts, Caddyfile, container entrypoint
+```
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | *(empty)* | Postgres URL. When empty, an embedded PGlite database in `DATA_DIR` is used (development only). |
+| `DATA_DIR` | `./data` | Media, temp files, and PGlite data |
+| `PUBLIC_URL` | request origin | Base URL for invite links and agent instructions |
+| `PORT` / `HOST` | `8080` / `0.0.0.0` | Listen address |
+| `MAX_UPLOAD_MB` | `2048` | Largest single upload |
+| `SESSION_TTL_DAYS` | `30` | Browser session lifetime (sliding) |
+| `COOKIE_SECURE` | on when `PUBLIC_URL` is https | Secure session cookie |
+| `TRUST_PROXY` | `true` | Honour `X-Forwarded-*` from a reverse proxy |
+| `REV_SETUP_TOKEN` | random | Fix the first-run setup token |
+| `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Media tools |

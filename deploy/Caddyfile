@@ -1,0 +1,9 @@
+# HTTPS reverse proxy for Rev. Enabled with `docker compose --profile tls up -d`.
+# Public domain: Caddy obtains a Let's Encrypt certificate automatically.
+# LAN-only name (e.g. rev.lan): uncomment `tls internal` and trust Caddy's root CA
+# on client machines (docker compose exec caddy cat /data/caddy/pki/authorities/local/root.crt).
+{$REV_DOMAIN} {
+	# tls internal
+	encode zstd gzip
+	reverse_proxy rev:8080
+}
