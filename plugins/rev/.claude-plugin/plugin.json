@@ -1,0 +1,9 @@
+{
+  "name": "rev",
+  "description": "Connect Claude Code to Rev: self-register with an enrollment key, pull tasks with annotated review feedback, submit review kits (screenshots + videos)",
+  "author": { "name": "VibOtaku" },
+  "homepage": "https://github.com/vibotaku/Rev",
+  "repository": "https://github.com/vibotaku/Rev",
+  "license": "MIT",
+  "keywords": ["rev", "review", "tasks", "mcp", "agents"]
+}

@@ -35,6 +35,8 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://rev:rev@localhost:5432/rev
       - run: npm run build
+      - name: Plugin ships the current CLI bundle
+        run: git diff --exit-code -- plugins/rev/cli/rev.mjs || (echo "Run npm run build and commit plugins/rev/cli/rev.mjs" && exit 1)
 
   docker:
     runs-on: ubuntu-latest

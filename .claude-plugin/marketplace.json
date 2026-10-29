@@ -1,0 +1,12 @@
+{
+  "name": "vibotaku",
+  "description": "Plugins for Rev, task management and visual review for humans and coding agents",
+  "owner": { "name": "VibOtaku" },
+  "plugins": [
+    {
+      "name": "rev",
+      "source": "./plugins/rev",
+      "description": "Connect Claude Code to Rev: self-register with an enrollment key, pull tasks with annotated review feedback, submit review kits (screenshots + videos)"
+    }
+  ]
+}
