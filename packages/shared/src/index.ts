@@ -7,6 +7,9 @@ export type UserKind = (typeof USER_KINDS)[number];
 export const GLOBAL_ROLES = ["admin", "member"] as const;
 export type GlobalRole = (typeof GLOBAL_ROLES)[number];
 
+export type AuthSource = "local" | "ldap";
+export type DisabledReason = "admin" | "directory";
+
 export const PROJECT_ROLES = ["owner", "member", "viewer"] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
@@ -107,7 +110,18 @@ const name = z.string().trim().min(1).max(100);
 const markdown = z.string().max(50_000);
 
 export const setupBody = z.object({ token: z.string().min(1), email, name, password });
-export const loginBody = z.object({ email, password: z.string().min(1).max(200) });
+/** `login` is an email for local accounts, or an AD username / UPN / DOMAIN\user / email. */
+export const loginBody = z
+  .object({
+    login: z.string().trim().min(1).max(320).optional(),
+    email: z.string().trim().min(1).max(320).optional(),
+    password: z.string().min(1).max(200),
+  })
+  .transform((b, ctx) => {
+    const login = (b.login ?? b.email ?? "").trim();
+    if (!login) ctx.addIssue({ code: "custom", path: ["login"], message: "Enter your email or username" });
+    return { login, password: b.password };
+  });
 export const changePasswordBody = z.object({ current: z.string().min(1), next: password });
 export const updateProfileBody = z.object({ name });
 export const inviteCreateBody = z.object({ email, role: z.enum(GLOBAL_ROLES).default("member") });
@@ -233,7 +247,17 @@ export interface UserSummary {
 export interface UserDetail extends UserSummary {
   role: GlobalRole;
   disabled: boolean;
+  disabledReason: DisabledReason | null;
+  authSource: AuthSource;
+  /** Directory login name for AD accounts. */
+  username: string | null;
   createdAt: string;
+}
+
+/** Public sign-in options, shown on the login page. */
+export interface AuthConfigInfo {
+  local: boolean;
+  ldap: { enabled: boolean; domain: string | null };
 }
 
 export interface Me {

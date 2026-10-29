@@ -31,8 +31,21 @@ services:
       REV_SETUP_TOKEN: ${REV_SETUP_TOKEN:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Active Directory sign-in (optional; see docs/active-directory.md)
+      LDAP_URL: ${LDAP_URL:-}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:-}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
+      LDAP_ALLOWED_GROUP: ${LDAP_ALLOWED_GROUP:-}
+      LDAP_DOMAIN: ${LDAP_DOMAIN:-}
+      LDAP_CA_FILE: ${LDAP_CA_FILE:-}
+      LDAP_STARTTLS: ${LDAP_STARTTLS:-}
+      LDAP_TLS_INSECURE: ${LDAP_TLS_INSECURE:-}
+      LDAP_SYNC_MINUTES: ${LDAP_SYNC_MINUTES:-15}
     volumes:
       - ${REV_MEDIA_DIR:-./data/rev}:/data
+      # Extra configuration files such as the directory's CA certificate.
+      - ./config:/config:ro
     ports:
       - "${REV_BIND:-0.0.0.0}:${REV_PORT:-8080}:8080"
 

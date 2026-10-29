@@ -12,6 +12,8 @@ import { openDatabase } from "./db";
 import { users } from "./db/schema";
 import { registerAuth } from "./lib/auth";
 import { randomToken } from "./lib/crypto";
+import { syncDirectoryAccounts } from "./lib/directory-accounts";
+import { LdapDirectory, type Directory } from "./lib/directory";
 import { HttpError } from "./lib/errors";
 import { MediaProcessor } from "./media/processor";
 import { Storage } from "./media/storage";
@@ -29,6 +31,8 @@ export interface CreateAppOptions {
   logger?: FastifyServerOptions["logger"];
   /** Use a throwaway in-memory database (tests). */
   memoryDb?: boolean;
+  /** Override the directory (tests); defaults to LDAP from config. */
+  directory?: Directory | null;
 }
 
 export async function createApp(config: Config, options: CreateAppOptions = {}) {
@@ -44,11 +48,13 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
   const processor = new MediaProcessor(database.db, storage, config, app.log);
 
   const [{ n }] = (await database.db.select({ n: count() }).from(users)) as [{ n: number }];
+  const directory = options.directory !== undefined ? options.directory : config.ldap ? new LdapDirectory(config.ldap, app.log) : null;
   const ctx: AppContext = {
     config,
     db: database.db,
     storage,
     processor,
+    directory,
     setup: { token: Number(n) === 0 ? (config.setupToken ?? randomToken(18)) : null },
   };
 
@@ -126,7 +132,21 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
     await routes(app, ctx);
   }
 
+  // Periodically re-check directory accounts so people who leave lose access (and their agents stop).
+  let syncTimer: NodeJS.Timeout | undefined;
+  const syncMinutes = config.ldap?.syncMinutes ?? 0;
+  if (directory && syncMinutes > 0) {
+    const run = () =>
+      syncDirectoryAccounts(ctx.db, directory, app.log)
+        .then((r) => (r.suspended.length || r.restored.length) && app.log.info(r, "directory sync"))
+        .catch((err) => app.log.error({ err }, "directory sync failed"));
+    syncTimer = setInterval(run, syncMinutes * 60_000);
+    syncTimer.unref();
+    setTimeout(run, 30_000).unref();
+  }
+
   app.addHook("onClose", async () => {
+    clearInterval(syncTimer);
     await processor.idle();
     await database.close();
   });

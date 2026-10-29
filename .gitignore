@@ -7,3 +7,4 @@ data/
 coverage/
 apps/server/test-data/
 backups/
+config/

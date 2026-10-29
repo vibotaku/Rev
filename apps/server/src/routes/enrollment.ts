@@ -125,7 +125,7 @@ export default async function enrollmentRoutes(app: FastifyInstance, ctx: AppCon
       if (req.query.disableAgents === "1") {
         await tx
           .update(users)
-          .set({ disabledAt: new Date() })
+          .set({ disabledAt: new Date(), disabledReason: "admin" })
           .where(and(eq(users.enrolledVia, key.id), isNull(users.disabledAt)));
       }
     });

@@ -47,7 +47,9 @@ export default async function adminRoutes(app: FastifyInstance, ctx: AppContext)
       .update(users)
       .set({
         ...(body.role ? { role: body.role } : {}),
-        ...(body.disabled !== undefined ? { disabledAt: body.disabled ? new Date() : null } : {}),
+        ...(body.disabled !== undefined
+          ? { disabledAt: body.disabled ? new Date() : null, disabledReason: body.disabled ? ("admin" as const) : null }
+          : {}),
       })
       .where(eq(users.id, user.id))
       .returning();
@@ -59,6 +61,7 @@ export default async function adminRoutes(app: FastifyInstance, ctx: AppContext)
     const admin = requireAdmin(req);
     const [user] = await ctx.db.select().from(users).where(eq(users.id, req.params.id));
     if (!user || user.kind !== "human" || !user.email) throw notFound("User");
+    if (user.authSource === "ldap") throw badRequest("This is an Active Directory account; its password is managed in AD");
     const token = randomToken(24);
     const [row] = await ctx.db
       .insert(invites)

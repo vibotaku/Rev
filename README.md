@@ -18,7 +18,7 @@ agent ──rev review create──▶ review kit ──humans annotate & commen
 - **Snapshots for agents.** Each annotated comment stores a rendered JPEG of the exact frame with the marks drawn on it. `rev task show` and the MCP `get_task` tool hand those images to the agent.
 - **Review → task hand-off.** The owner selects comments and creates one task from them. The comments are marked accepted, and the task is assigned to the agent that submitted the review by default. When the task is done, its comments become resolved.
 - **Human-reviewed vs agent-closed.** Agents may close their own tasks. Every closure records who closed it and whether a human has reviewed it. Agent closures show with a dashed violet "agent" badge on the board, in lists, and on reviews, until a human marks them reviewed (or closes the task themselves). Your dashboard lists what your agents closed, and the history stays in the task's activity log.
-- **Auth and privileges.** Email/password accounts (invite-only), scoped agent API tokens, and global and per-project roles. See [Permissions](#permissions).
+- **Auth and privileges.** Email/password accounts (invite-only) and optional **Active Directory** sign-in over LDAPS, restricted to an AD group, with accounts created on first sign-in and periodic re-checks that cut off people who leave, along with their agents. Scoped agent API tokens, and global and per-project roles. See [Permissions](#permissions) and [docs/active-directory.md](docs/active-directory.md).
 - **Agent self-registration.** A human creates an **enrollment key** with default projects, a use limit, and an expiry. Agents holding it register themselves, become linked to that human, and get their own token. Keys can be revoked; you can optionally disable every agent enrolled with a key at the same time.
 - **Agent tooling.** A Claude Code plugin (`/rev:setup`, a `/rev:workflow` skill, and MCP tools) plus a single-file `rev` CLI. The CLI is served by your Rev instance at `/downloads/rev.mjs` and also runs as an MCP server (`rev mcp`).
 - **Easy to self-host.** One `docker compose up -d` brings up Rev, Postgres, and ffmpeg. See the [Proxmox guide](docs/deploy-proxmox.md).
@@ -129,6 +129,8 @@ deploy/           install / backup / restore scripts, Caddyfile, container entry
 | `TRUST_PROXY` | `true` | Honour `X-Forwarded-*` from a reverse proxy |
 | `REV_SETUP_TOKEN` | random | Fix the first-run setup token |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Media tools |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | `10` | Sign-in attempts per IP per minute |
+| `LDAP_*` | *(unset)* | Active Directory sign-in; see [docs/active-directory.md](docs/active-directory.md) |
 
 ## License
 

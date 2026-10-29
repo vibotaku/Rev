@@ -36,7 +36,7 @@ export function Admin() {
     <div>
       <PageHeader
         title="Admin"
-        subtitle="People sign in with email and password. Rev does not send email — share invite and reset links yourself."
+        subtitle="Local accounts sign in with email and password (Rev does not send email; share invite and reset links yourself). Active Directory accounts appear here after their first sign-in."
         actions={
           <Button variant="primary" onClick={() => setInviting(true)}>
             <Mail className="size-4" /> Invite someone
@@ -54,7 +54,19 @@ export function Admin() {
                   <UserChip user={u} size="md" />
                 </div>
                 <span className="hidden text-sm text-zinc-500 sm:block">{u.email}</span>
-                {u.disabled && <Badge className="bg-red-50 text-red-600">disabled</Badge>}
+                {u.authSource === "ldap" && (
+                  <Badge className="bg-sky-50 text-sky-700" title={`Active Directory account ${u.username ?? ""}`}>
+                    AD
+                  </Badge>
+                )}
+                {u.disabled && (
+                  <Badge
+                    className="bg-red-50 text-red-600"
+                    title={u.disabledReason === "directory" ? "Active Directory no longer allows this account; restored automatically if it does again" : undefined}
+                  >
+                    {u.disabledReason === "directory" ? "suspended by AD" : "disabled"}
+                  </Badge>
+                )}
                 <Select
                   className="w-28"
                   value={u.role}
@@ -64,9 +76,11 @@ export function Admin() {
                   <option value="member">member</option>
                   <option value="admin">admin</option>
                 </Select>
-                <Button size="sm" onClick={() => reset.mutate(u)}>
-                  Reset link
-                </Button>
+                {u.authSource === "local" && (
+                  <Button size="sm" onClick={() => reset.mutate(u)}>
+                    Reset link
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant={u.disabled ? "secondary" : "danger"}

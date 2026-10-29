@@ -14,6 +14,8 @@ import {
 } from "drizzle-orm/pg-core";
 import type {
   Annotation,
+  AuthSource,
+  DisabledReason,
   AssetKind,
   AssetStatus,
   CommentStatus,
@@ -44,7 +46,15 @@ export const users = pgTable(
     description: text("description").notNull().default(""),
     /** For self-registered agents: the enrollment key they registered with. */
     enrolledVia: uuid("enrolled_via").references((): AnyPgColumn => enrollmentKeys.id, { onDelete: "set null" }),
+    /** "ldap" for Active Directory accounts (created on first sign-in), else "local". */
+    authSource: text("auth_source").$type<AuthSource>().notNull().default("local"),
+    /** Directory object id (AD objectGUID, hex) for ldap accounts. */
+    externalId: text("external_id").unique(),
+    /** Directory login name (sAMAccountName). */
+    username: text("username"),
     disabledAt: ts("disabled_at"),
+    /** "admin": disabled in Rev. "directory": suspended because AD no longer allows the account (lifted automatically). */
+    disabledReason: text("disabled_reason").$type<DisabledReason>(),
     createdAt: createdAt(),
   },
   (t) => [index("users_owner_idx").on(t.ownerId)],

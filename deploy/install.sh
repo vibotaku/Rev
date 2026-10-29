@@ -32,7 +32,7 @@ set -a
 # shellcheck disable=SC1091
 . ./.env
 set +a
-mkdir -p "${REV_DB_DIR:-./data/postgres}" "${REV_MEDIA_DIR:-./data/rev}"
+mkdir -p "${REV_DB_DIR:-./data/postgres}" "${REV_MEDIA_DIR:-./data/rev}" ./config
 
 echo "==> Building and starting Rev"
 docker compose up -d --build

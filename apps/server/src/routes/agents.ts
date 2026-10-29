@@ -90,7 +90,9 @@ export default async function agentRoutes(app: FastifyInstance, ctx: AppContext)
       .set({
         ...(body.name ? { name: body.name } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
-        ...(body.disabled !== undefined ? { disabledAt: body.disabled ? new Date() : null } : {}),
+        ...(body.disabled !== undefined
+          ? { disabledAt: body.disabled ? new Date() : null, disabledReason: body.disabled ? ("admin" as const) : null }
+          : {}),
       })
       .where(eq(users.id, agent.id))
       .returning();

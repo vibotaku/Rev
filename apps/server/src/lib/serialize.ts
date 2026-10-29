@@ -28,7 +28,15 @@ export function userSummary(u: UserRow): UserSummary {
 }
 
 export function userDetail(u: UserRow): UserDetail {
-  return { ...userSummary(u), role: u.role, disabled: !!u.disabledAt, createdAt: u.createdAt.toISOString() };
+  return {
+    ...userSummary(u),
+    role: u.role,
+    disabled: !!u.disabledAt,
+    disabledReason: u.disabledAt ? (u.disabledReason ?? "admin") : null,
+    authSource: u.authSource,
+    username: u.username,
+    createdAt: u.createdAt.toISOString(),
+  };
 }
 
 const unknownUser = (id: string): UserSummary => ({ id, name: "Unknown", kind: "human", email: null, ownerId: null });

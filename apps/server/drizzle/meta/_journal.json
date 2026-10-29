@@ -22,6 +22,13 @@
       "when": 1793315755783,
       "tag": "0002_enrollment_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793317204152,
+      "tag": "0003_directory_accounts",
+      "breakpoints": true
     }
   ]
 }

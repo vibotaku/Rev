@@ -30397,7 +30397,15 @@ var password = external_exports.string().min(10, "Password must be at least 10 c
 var name = external_exports.string().trim().min(1).max(100);
 var markdown = external_exports.string().max(5e4);
 var setupBody = external_exports.object({ token: external_exports.string().min(1), email: email3, name, password });
-var loginBody = external_exports.object({ email: email3, password: external_exports.string().min(1).max(200) });
+var loginBody = external_exports.object({
+  login: external_exports.string().trim().min(1).max(320).optional(),
+  email: external_exports.string().trim().min(1).max(320).optional(),
+  password: external_exports.string().min(1).max(200)
+}).transform((b, ctx) => {
+  const login = (b.login ?? b.email ?? "").trim();
+  if (!login) ctx.addIssue({ code: "custom", path: ["login"], message: "Enter your email or username" });
+  return { login, password: b.password };
+});
 var changePasswordBody = external_exports.object({ current: external_exports.string().min(1), next: password });
 var updateProfileBody = external_exports.object({ name });
 var inviteCreateBody = external_exports.object({ email: email3, role: external_exports.enum(GLOBAL_ROLES).default("member") });

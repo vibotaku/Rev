@@ -1,22 +1,24 @@
 import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { and, count, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, count, eq, gt, isNull, ne, sql } from "drizzle-orm";
 import {
   changePasswordBody,
   inviteAcceptBody,
   loginBody,
   setupBody,
   updateProfileBody,
+  type AuthConfigInfo,
   type Me,
 } from "@rev/shared";
 import type { AppContext } from "../context";
 import { invites, sessions, users } from "../db/schema";
 import { endSession, requireActor, requireHuman, SESSION_COOKIE, startSession } from "../lib/auth";
 import { hashPassword, sha256, verifyPassword } from "../lib/crypto";
-import { badRequest, conflict, forbidden, notFound, parse, unauthorized } from "../lib/errors";
+import { DirectoryUnavailableError } from "../lib/directory";
+import { upsertDirectoryUser } from "../lib/directory-accounts";
+import { badRequest, conflict, forbidden, HttpError, notFound, parse, unauthorized } from "../lib/errors";
 import { userDetail } from "../lib/serialize";
 
-const authLimit = { rateLimit: { max: 10, timeWindow: "1 minute" } };
 // Hash used to keep login timing similar when the email is unknown.
 const DUMMY_HASH = "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -41,6 +43,7 @@ async function findInvite(ctx: AppContext, token: string) {
 }
 
 export default async function authRoutes(app: FastifyInstance, ctx: AppContext) {
+  const authLimit = { rateLimit: { max: ctx.config.authRateLimit, timeWindow: "1 minute" } };
   app.get("/api/setup/status", async () => ({ needsSetup: ctx.setup.token !== null }));
 
   app.post("/api/setup", { config: authLimit }, async (req, reply) => {
@@ -67,14 +70,43 @@ export default async function authRoutes(app: FastifyInstance, ctx: AppContext) 
     return { user: userDetail(user!), viaToken: false } satisfies Me;
   });
 
+  app.get("/api/auth/config", async (): Promise<AuthConfigInfo> => ({
+    local: true,
+    ldap: { enabled: !!ctx.directory, domain: ctx.directory?.domain ?? null },
+  }));
+
+  /**
+   * Local accounts sign in with email + password. With Active Directory
+   * configured, anything else (username, UPN, CORP\user, or an email with no
+   * local password) is checked against the directory; the Rev account is
+   * created on first sign-in. Linked accounts may use either password.
+   */
   app.post("/api/auth/login", { config: authLimit }, async (req, reply) => {
     const body = parse(loginBody, req.body);
-    const [user] = await ctx.db
-      .select()
-      .from(users)
-      .where(and(eq(users.email, body.email), eq(users.kind, "human")));
-    const ok = await verifyPassword(body.password, user?.passwordHash ?? DUMMY_HASH);
-    if (!user || !ok) throw unauthorized("Incorrect email or password");
+    const login = body.login.toLowerCase();
+    const [local] = login.includes("@")
+      ? await ctx.db.select().from(users).where(and(sql`lower(${users.email}) = ${login}`, eq(users.kind, "human")))
+      : [];
+    const localOk = await verifyPassword(body.password, local?.passwordHash ?? DUMMY_HASH);
+
+    let user = localOk ? local : undefined;
+    if (!user && ctx.directory) {
+      let result;
+      try {
+        result = await ctx.directory.authenticate(body.login, body.password);
+      } catch (err) {
+        if (err instanceof DirectoryUnavailableError) {
+          req.log.warn({ err: err.message }, "directory sign-in failed");
+          throw new HttpError(503, "directory_unavailable", "Active Directory is unreachable right now. Try again shortly, or use a local account.");
+        }
+        throw err;
+      }
+      if (result && !result.allowed) {
+        throw forbidden(`Your directory account can't sign in to Rev: ${result.reason ?? "not allowed"}. Ask an administrator for access.`);
+      }
+      if (result) user = await upsertDirectoryUser(ctx.db, result.user);
+    }
+    if (!user) throw unauthorized(ctx.directory ? "Incorrect username or password" : "Incorrect email or password");
     if (user.disabledAt) throw forbidden("This account is disabled");
     await startSession(ctx, req, reply, user.id);
     return { user: userDetail(user), viaToken: false } satisfies Me;
@@ -90,6 +122,8 @@ export default async function authRoutes(app: FastifyInstance, ctx: AppContext) 
   app.patch("/api/auth/me", async (req) => {
     const actor = requireHuman(req, "edit profiles");
     const body = parse(updateProfileBody, req.body);
+    const [current] = await ctx.db.select({ authSource: users.authSource }).from(users).where(eq(users.id, actor.id));
+    if (current?.authSource === "ldap") throw badRequest("Your name comes from Active Directory");
     await ctx.db.update(users).set({ name: body.name }).where(eq(users.id, actor.id));
     return meOf(ctx, req);
   });
@@ -98,6 +132,7 @@ export default async function authRoutes(app: FastifyInstance, ctx: AppContext) 
     const actor = requireHuman(req, "change passwords");
     const body = parse(changePasswordBody, req.body);
     const [user] = await ctx.db.select().from(users).where(eq(users.id, actor.id));
+    if (!user!.passwordHash) throw badRequest("Your password is managed by Active Directory");
     if (!(await verifyPassword(body.current, user!.passwordHash))) throw badRequest("Current password is incorrect");
     await ctx.db.update(users).set({ passwordHash: await hashPassword(body.next) }).where(eq(users.id, actor.id));
     // Sign out every other browser session.

@@ -26,6 +26,23 @@ export function Account() {
     },
   });
 
+  if (user.authSource === "ldap") {
+    return (
+      <div>
+        <PageHeader title="Account" subtitle={user.email} />
+        <div className="mx-auto max-w-xl px-8 py-6">
+          <Card className="space-y-2 p-5 text-sm">
+            <div className="font-medium">{user.name}</div>
+            <div className="text-zinc-500">
+              Active Directory account <span className="font-mono">{user.username}</span>. Your name, email and password are managed
+              in Active Directory; change them there and they update here on your next sign-in.
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader title="Account" subtitle={user.email} />

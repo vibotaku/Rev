@@ -81,9 +81,9 @@ export function Card({ className, children }: { className?: string; children: Re
   return <div className={cx("rounded-lg border border-zinc-200 bg-white shadow-sm", className)}>{children}</div>;
 }
 
-export function Badge({ className, children }: { className?: string; children: ReactNode }) {
+export function Badge({ className, children, title }: { className?: string; children: ReactNode; title?: string }) {
   return (
-    <span className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap", className)}>
+    <span title={title} className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap", className)}>
       {children}
     </span>
   );

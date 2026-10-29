@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
-import type { Me } from "@rev/shared";
+import type { AuthConfigInfo, Me } from "@rev/shared";
 import { api } from "../api";
 import { Button, ErrorBox, Field, Input, PageLoader } from "../components/ui";
 
@@ -85,13 +85,29 @@ export function Setup() {
 export function Login() {
   const signedIn = useSignedIn();
   const status = useQuery({ queryKey: ["setup"], queryFn: () => api.get<{ needsSetup: boolean }>("/api/setup/status") });
-  const [email, setEmail] = useState("");
+  const authConfig = useQuery({ queryKey: ["auth-config"], queryFn: () => api.get<AuthConfigInfo>("/api/auth/config") });
+  const [loginName, setLoginName] = useState("");
   const [password, setPassword] = useState("");
-  const login = useMutation({ mutationFn: () => api.post<Me>("/api/auth/login", { email, password }), onSuccess: signedIn });
+  const login = useMutation({
+    mutationFn: () => api.post<Me>("/api/auth/login", { login: loginName, password }),
+    onSuccess: signedIn,
+  });
+  const ad = authConfig.data?.ldap.enabled ? authConfig.data.ldap.domain : null;
 
   if (status.data?.needsSetup) return <Navigate to="/setup" replace />;
   return (
-    <AuthCard title="Sign in" subtitle="Accounts are created by invitation from an admin.">
+    <AuthCard
+      title="Sign in"
+      subtitle={
+        ad ? (
+          <>
+            Use your <span className="font-medium text-zinc-700">{ad}</span> account (username or email), or a local Rev account.
+          </>
+        ) : (
+          "Accounts are created by invitation from an admin."
+        )
+      }
+    >
       <form
         className="space-y-4"
         onSubmit={(e) => {
@@ -99,8 +115,16 @@ export function Login() {
           login.mutate();
         }}
       >
-        <Field label="Email">
-          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus autoComplete="username" />
+        <Field label={ad ? "Username or email" : "Email"}>
+          <Input
+            type={ad ? "text" : "email"}
+            value={loginName}
+            onChange={(e) => setLoginName(e.target.value)}
+            required
+            autoFocus
+            autoComplete="username"
+            placeholder={ad ? `jdoe or jdoe@${ad}` : undefined}
+          />
         </Field>
         <Field label="Password">
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
