@@ -140,6 +140,8 @@ export function TaskPage() {
                         {c.reviewRef}
                       </Link>
                       {c.timestampMs != null && <span>@ {formatTimestamp(c.timestampMs)}</span>}
+                      {c.markIndex != null && <span className="rounded bg-zinc-100 px-1 font-medium text-zinc-600">mark #{c.markIndex}</span>}
+                      {c.roundNumber > 1 && <span>round {c.roundNumber}</span>}
                       <CommentStatusBadge status={c.status} />
                     </div>
                     <Markdown>{c.body}</Markdown>
@@ -262,10 +264,13 @@ export function TaskPage() {
             {task.deliveries.length ? (
               <ul className="space-y-2">
                 {task.deliveries.map((d) => (
-                  <li key={d.id}>
-                    <Link to={reviewRefPath(d.ref)} className="flex items-center gap-2 text-sm hover:underline">
+                  <li key={`${d.id}-${d.round ?? 0}`}>
+                    <Link to={reviewRefPath(d.ref) + (d.round ? `?round=${d.round}` : "")} className="flex items-center gap-2 text-sm hover:underline">
                       <span className="font-mono text-xs text-zinc-500">{d.ref}</span>
-                      <span className="min-w-0 flex-1 truncate">{d.title}</span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {d.title}
+                        {d.round != null && <span className="ml-1 text-xs text-zinc-500">· round {d.round}</span>}
+                      </span>
                       <ReviewStatusBadge status={d.status} />
                     </Link>
                   </li>

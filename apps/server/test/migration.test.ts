@@ -62,3 +62,37 @@ it("backfills who closed tasks that were closed before closure tracking", async 
   expect(rows[2]).toMatchObject({ closed_by: null, human_reviewed_by: null, completed_at: null });
   await client.close();
 });
+
+it("turns every existing review into round 1, with its media and comments", async () => {
+  const client = new PGlite();
+  const db = drizzle(client);
+  await migrate(db, { migrationsFolder: migrationsUpTo(5) });
+
+  await client.exec(`
+    insert into users (id, name, kind, email) values ('00000000-0000-0000-0000-000000000001', 'Alice', 'human', 'a@example.com');
+    insert into projects (id, key, name) values ('00000000-0000-0000-0000-0000000000a1', 'WEB', 'Web');
+    insert into reviews (id, project_id, number, title, status, created_by, owner_id, published_at) values
+      ('00000000-0000-0000-0000-0000000000c1', '00000000-0000-0000-0000-0000000000a1', 1, 'published', 'open',
+       '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '2026-02-01T00:00:00Z'),
+      ('00000000-0000-0000-0000-0000000000c2', '00000000-0000-0000-0000-0000000000a1', 2, 'draft', 'draft',
+       '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', null);
+    insert into review_assets (id, review_id, kind, filename, mime, size, storage_key) values
+      ('00000000-0000-0000-0000-0000000000d1', '00000000-0000-0000-0000-0000000000c1', 'image', 'a.png', 'image/png', 1, 'k');
+    insert into review_comments (id, review_id, author_id, body) values
+      ('00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000c1', '00000000-0000-0000-0000-000000000001', 'hi');
+  `);
+
+  await migrate(db, { migrationsFolder: folder });
+  const rounds = await client.query<{ review_id: string; number: number; submitted_at: Date | null; id: string }>(
+    "select id, review_id, number, submitted_at from review_rounds order by review_id",
+  );
+  expect(rounds.rows.map((r) => [r.review_id.slice(-2), r.number, r.submitted_at?.toISOString() ?? null])).toEqual([
+    ["c1", 1, "2026-02-01T00:00:00.000Z"],
+    ["c2", 1, null],
+  ]);
+  const asset = await client.query<{ round_id: string }>("select round_id from review_assets");
+  const comment = await client.query<{ round_id: string }>("select round_id from review_comments");
+  expect(asset.rows[0]!.round_id).toBe(rounds.rows[0]!.id);
+  expect(comment.rows[0]!.round_id).toBe(rounds.rows[0]!.id);
+  await client.close();
+});

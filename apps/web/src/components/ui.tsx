@@ -1,4 +1,4 @@
-import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useEffect, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, Loader2, UserCheck, X } from "lucide-react";
@@ -51,7 +51,7 @@ const fieldBase =
 /** Full width unless the caller sets its own width class. */
 const field = (className?: string) => cx(fieldBase, !/(^|\s)w-/.test(className ?? "") && "w-full", className);
 
-export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, ...rest }: ComponentProps<"input">) {
   return <input {...rest} className={field(cx("h-9", className))} />;
 }
 

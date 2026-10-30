@@ -5,6 +5,13 @@ import { Spinner } from "../components/ui";
 import { cx } from "../lib";
 import { shapeFromDrag, ShapesSvg, type Tool } from "./shapes";
 
+/** Shapes drawn over the media for an existing comment; `highlight` singles out one mark. */
+export interface Overlay {
+  shapes: Shape[];
+  labels?: (number | null)[];
+  highlight?: number | null;
+}
+
 export interface Marker {
   id: string;
   timestampMs: number;
@@ -31,7 +38,7 @@ export function MediaStage({
   color: string;
   draft: Shape[];
   onDraftChange: (shapes: Shape[]) => void;
-  overlay: Shape[] | null;
+  overlay: Overlay | null;
   markers: Marker[];
   onMarkerClick: (id: string) => void;
   mediaRef: React.RefObject<HTMLVideoElement | HTMLImageElement | null>;
@@ -150,8 +157,13 @@ export function MediaStage({
               onPointerUp={onPointerUp}
               onPointerCancel={() => setGesture(null)}
             >
-              {overlay && <ShapesSvg shapes={overlay} w={nw} h={nh} numbered />}
-              <ShapesSvg shapes={preview ? [...draft, preview] : draft} w={nw} h={nh} numbered />
+              {overlay && <ShapesSvg shapes={overlay.shapes} labels={overlay.labels} highlight={overlay.highlight} w={nw} h={nh} />}
+              <ShapesSvg
+                shapes={preview ? [...draft, preview] : draft}
+                labels={[...draft, ...(preview ? [preview] : [])].map((_, i) => i + 1)}
+                w={nw}
+                h={nh}
+              />
             </svg>
           </div>
         )}

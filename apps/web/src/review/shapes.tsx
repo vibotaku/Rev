@@ -19,27 +19,71 @@ function arrowHead(x1: number, y1: number, x2: number, y2: number, size: number)
   ] as const;
 }
 
-export function ShapesSvg({ shapes, w, h, faded, numbered }: { shapes: Shape[]; w: number; h: number; faded?: boolean; numbered?: boolean }) {
+/** Where a shape's number badge goes: on a pin itself, otherwise at the shape's start. */
+function anchorOf(s: Shape, w: number, h: number): [number, number] {
+  switch (s.type) {
+    case "pin":
+      return [s.x * w, s.y * h];
+    case "rect":
+      return [s.x * w, s.y * h];
+    case "arrow":
+      return [s.x1 * w, s.y1 * h];
+    case "pen":
+      return [s.points[0]![0] * w, s.points[0]![1] * h];
+  }
+}
+
+/** Dark text on light colours (yellow, white), white text otherwise. */
+function labelInk(hex: string) {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+  return lum > 160 ? "#111" : "#fff";
+}
+
+/**
+ * `labels[i]` is the number drawn on shape i (null = no number); `highlight`
+ * dims every other shape, e.g. while a single mark's comment is selected.
+ */
+export function ShapesSvg({
+  shapes,
+  w,
+  h,
+  faded,
+  labels,
+  highlight,
+}: {
+  shapes: Shape[];
+  w: number;
+  h: number;
+  faded?: boolean;
+  labels?: (number | null)[];
+  highlight?: number | null;
+}) {
   const sw = strokeFor(w, h);
   return (
     <g opacity={faded ? 0.55 : 1} style={{ filter: "drop-shadow(0 0 1px rgba(0,0,0,.8))" }}>
       {shapes.map((s, i) => {
+        const dim = highlight != null && highlight !== i ? 0.3 : 1;
+        const label = labels?.[i];
+        const [ax, ay] = anchorOf(s, w, h);
+        let body: React.ReactNode;
         switch (s.type) {
           case "rect":
-            return <rect key={i} x={s.x * w} y={s.y * h} width={s.w * w} height={s.h * h} fill="none" stroke={s.color} strokeWidth={sw} rx={sw} />;
+            body = <rect x={s.x * w} y={s.y * h} width={s.w * w} height={s.h * h} fill="none" stroke={s.color} strokeWidth={sw} rx={sw} />;
+            break;
           case "arrow": {
             const [p1, p2, p3] = arrowHead(s.x1 * w, s.y1 * h, s.x2 * w, s.y2 * h, sw * 5);
-            return (
-              <g key={i}>
+            body = (
+              <>
                 <line x1={s.x1 * w} y1={s.y1 * h} x2={s.x2 * w} y2={s.y2 * h} stroke={s.color} strokeWidth={sw} strokeLinecap="round" />
                 <polygon points={`${p1.join(",")} ${p2.join(",")} ${p3.join(",")}`} fill={s.color} />
-              </g>
+              </>
             );
+            break;
           }
           case "pen":
-            return (
+            body = (
               <polyline
-                key={i}
                 points={s.points.map(([x, y]) => `${x * w},${y * h}`).join(" ")}
                 fill="none"
                 stroke={s.color}
@@ -48,31 +92,37 @@ export function ShapesSvg({ shapes, w, h, faded, numbered }: { shapes: Shape[]; 
                 strokeLinejoin="round"
               />
             );
+            break;
           case "pin":
-            return (
-              <g key={i}>
-                <circle cx={s.x * w} cy={s.y * h} r={sw * 4} fill={s.color} stroke="#000" strokeOpacity={0.4} strokeWidth={sw / 2} />
-                {numbered && (
-                  <text x={s.x * w} y={s.y * h} fontSize={sw * 4.5} fontWeight={700} textAnchor="middle" dominantBaseline="central" fill="#000">
-                    {i + 1}
-                  </text>
-                )}
-              </g>
-            );
+            body = <circle cx={ax} cy={ay} r={sw * 4} fill={s.color} stroke="#000" strokeOpacity={0.4} strokeWidth={sw / 2} />;
+            break;
         }
+        return (
+          <g key={i} opacity={dim}>
+            {body}
+            {label != null && (
+              <g>
+                {s.type !== "pin" && <circle cx={ax} cy={ay} r={sw * 3.4} fill={s.color} stroke="#000" strokeOpacity={0.4} strokeWidth={sw / 2} />}
+                <text x={ax} y={ay} fontSize={sw * 4} fontWeight={700} textAnchor="middle" dominantBaseline="central" fill={labelInk(s.color)}>
+                  {label}
+                </text>
+              </g>
+            )}
+          </g>
+        );
       })}
     </g>
   );
 }
 
-export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], w: number, h: number) {
+export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], w: number, h: number, labels?: (number | null)[]) {
   const sw = strokeFor(w, h);
   ctx.lineWidth = sw;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.shadowColor = "rgba(0,0,0,.8)";
   ctx.shadowBlur = 2;
-  for (const s of shapes) {
+  shapes.forEach((s, i) => {
     ctx.strokeStyle = s.color;
     ctx.fillStyle = s.color;
     ctx.beginPath();
@@ -94,7 +144,7 @@ export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], w: nu
         break;
       }
       case "pen":
-        s.points.forEach(([x, y], i) => (i ? ctx.lineTo(x * w, y * h) : ctx.moveTo(x * w, y * h)));
+        s.points.forEach(([x, y], j) => (j ? ctx.lineTo(x * w, y * h) : ctx.moveTo(x * w, y * h)));
         ctx.stroke();
         break;
       case "pin":
@@ -102,11 +152,31 @@ export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], w: nu
         ctx.fill();
         break;
     }
-  }
+    const label = labels?.[i];
+    if (label == null) return;
+    const [ax, ay] = anchorOf(s, w, h);
+    if (s.type !== "pin") {
+      ctx.beginPath();
+      ctx.arc(ax, ay, sw * 3.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = labelInk(s.color);
+    ctx.font = `700 ${sw * 4}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(label), ax, ay);
+    ctx.restore();
+  });
 }
 
 /** Renders the current frame (or image) plus shapes to a JPEG, capped at 1920px wide. */
-export async function renderSnapshot(el: HTMLVideoElement | HTMLImageElement, shapes: Shape[]): Promise<Blob | null> {
+export async function renderSnapshot(
+  el: HTMLVideoElement | HTMLImageElement,
+  shapes: Shape[],
+  labels?: (number | null)[],
+): Promise<Blob | null> {
   const nw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth;
   const nh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
   if (!nw || !nh) return null;
@@ -119,7 +189,7 @@ export async function renderSnapshot(el: HTMLVideoElement | HTMLImageElement, sh
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   ctx.drawImage(el, 0, 0, w, h);
-  drawShapes(ctx, shapes, w, h);
+  drawShapes(ctx, shapes, w, h, labels);
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/jpeg", 0.88));
 }
 

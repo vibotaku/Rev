@@ -1,6 +1,6 @@
 ---
 name: workflow
-description: Work through Rev, the team's task and visual-review tracker. Use to pick up tasks assigned to you, read annotated review feedback (video timestamps, marked-up snapshots), submit review kits with screenshots and screen recordings, answer reviewer comments, and close or hand back tasks. Triggers on mentions of Rev, task refs like WEB-12, review refs like WEB-R3, "review kit", or "check my Rev tasks".
+description: Work through Rev, the team's task and visual-review tracker. Use to pick up tasks assigned to you, read annotated review feedback (video timestamps, mark notes, marked-up snapshots), submit review kits or the next round of a review with screenshots and screen recordings, answer reviewer comments, and close or hand back tasks. Triggers on mentions of Rev, task refs like WEB-12, review refs like WEB-R3, "review kit", or "check my Rev tasks".
 allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/cli/rev.mjs *)
 ---
 
@@ -14,6 +14,7 @@ Use the **Rev MCP tools** from this plugin. If they are unavailable, use the bun
 
 1. **Pull work.** Call `list_my_tasks`, then `get_task` with the task ref (`WEB-12`).
    - A task created from review feedback includes each source comment, with its video timestamp, a text description of the marks (box, arrow, pin, freehand, as percentages of the frame), and an **annotated snapshot image** of the exact frame. Read every one; each is a requirement.
+   - Reviewers can attach a note to a single mark. Such feedback shows as `mark #2 of comment …`: the number matches the mark drawn on the frame, and its snapshot shows just that mark.
    - CLI: `rev tasks`, `rev task show WEB-12 --save-snapshots ./rev-feedback`.
 2. **Start.** Call `update_task_status` with `in_progress` (CLI: `rev task start WEB-12`).
 3. **Do the work.** Use `comment_on_task` for progress notes or questions to the humans.
@@ -25,13 +26,19 @@ Use the **Rev MCP tools** from this plugin. If they are unavailable, use the bun
      - macOS: `screencapture -x shot.png`; `screencapture -v clip.mov` for video.
      - Linux/X11: `ffmpeg -f x11grab -i :0 -t 20 clip.mp4`.
    - Save the files to a temp folder, not into the repo.
-5. **Submit a review kit.** Call `create_review` with:
-   - `project` (key), `title`, and `description` (markdown: what changed, why, how to verify, anything not done);
-   - `files` (absolute paths) and optional `captions`;
-   - `task_ref`, so the review is linked to the task. Publishing moves the task to `in_review`.
+5. **Deliver the evidence.**
+   - **The task came from a review** (`get_task` shows `From review: WEB-R3`): submit the fix as the **next round of that same review**. Do not open a new review. Call `submit_review_round` with:
+     - `review_ref`, `notes` (markdown: what changed since the last round, how to verify, anything not done);
+     - `files` (absolute paths) and optional `captions`;
+     - optionally `task_refs`; by default the round addresses your open tasks from that review.
 
-   CLI: `rev review create -p WEB -t "…" --task WEB-12 -d "…" --caption-each clip.mp4 after.png`.
-6. **Respond to feedback.** Call `get_review` (with `include_snapshots: true` to see the marks). Use `reply_to_review_comment` to answer questions or explain decisions, and `comment_on_review` for general notes. Accepted comments come back to you as new tasks.
+     The round reopens the review for its owner and moves the addressed tasks to `in_review`.
+     CLI: `rev review round WEB-R3 -n "…" --caption-each clip.mp4 after.png`.
+   - **New work with no source review:** call `create_review` with `project`, `title`, `description`, `files`, optional `captions`, and `task_ref` to link it to the task. Publishing moves the task to `in_review`.
+     CLI: `rev review create -p WEB -t "…" --task WEB-12 -d "…" --caption-each clip.mp4 after.png`.
+6. **Respond to feedback.** Call `get_review`, with `include_snapshots: true` to see the marks. It shows each round with its notes, media and comments.
+   - Use `reply_to_review_comment` to answer questions or explain decisions; you can reply to an overall comment or to a single mark note. Use `comment_on_review` for general notes.
+   - The review owner accepts or rejects every comment and every mark note separately. Only accepted ones come back to you as tasks, so don't act on feedback that is still open or rejected unless a task asks for it.
 
 ## Closing tasks
 
@@ -42,6 +49,7 @@ Use the **Rev MCP tools** from this plugin. If they are unavailable, use the bun
 ## Rules
 
 - You cannot approve reviews, accept or reject comments, create or assign tasks, or manage projects. Those decisions belong to the humans. Ask in a comment if you need one of them.
-- Work only on tasks assigned to you, and link review kits only to your own tasks.
+- Work only on tasks assigned to you, and link review kits and rounds only to your own tasks.
+- One draft round at a time per review. If a round submission fails part-way, the tools discard the draft automatically; just retry.
 - Keep review titles short and specific. Put the reasoning in the description, not in the title.
 - Never print or store Rev tokens or enrollment keys.

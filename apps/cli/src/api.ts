@@ -128,17 +128,46 @@ export class RevApi {
     return this.request<ReviewDetail>("PATCH", `/api/reviews/${encodeURIComponent(ref)}`, { status });
   }
 
-  commentOnReview(ref: string, input: { body: string; parentId?: string; assetId?: string }) {
-    return this.request<ReviewCommentInfo>("POST", `/api/reviews/${encodeURIComponent(ref)}/comments`, input);
+  /** Posts a comment; `marks` adds a separate note per mark (0-based shape index). Returns the comment plus its mark comments. */
+  commentOnReview(
+    ref: string,
+    input: { body: string; parentId?: string; assetId?: string; round?: number; marks?: { index: number; body: string }[] },
+  ) {
+    return this.request<ReviewCommentInfo & { marks?: ReviewCommentInfo[] }>(
+      "POST",
+      `/api/reviews/${encodeURIComponent(ref)}/comments`,
+      input,
+    );
   }
 
-  /** Streams a file from disk as a multipart upload. */
-  async uploadAsset(reviewRef: string, filePath: string, caption?: string) {
+  /** Starts the next round of a review as a draft. Without taskRefs the server links your open tasks from this review. */
+  createRound(reviewRef: string, input: { notes?: string; taskRefs?: string[] }) {
+    return this.request<ReviewDetail>("POST", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds`, input);
+  }
+
+  submitRound(reviewRef: string, number: number) {
+    return this.request<ReviewDetail>("POST", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds/${number}/submit`);
+  }
+
+  updateRoundNotes(reviewRef: string, number: number, notes: string) {
+    return this.request<ReviewDetail>("PATCH", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds/${number}`, { notes });
+  }
+
+  /** Discards a draft round and its media. */
+  deleteRound(reviewRef: string, number: number) {
+    return this.request<ReviewDetail>("DELETE", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds/${number}`);
+  }
+
+  /** Streams a file from disk as a multipart upload, into `round` (default: the latest round). */
+  async uploadAsset(reviewRef: string, filePath: string, caption?: string, round?: number) {
     const type = MEDIA_EXTENSIONS[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
     const blob = await openAsBlob(filePath, { type });
     const form = new FormData();
     form.append("file", blob, path.basename(filePath));
-    const q = caption ? `?caption=${encodeURIComponent(caption)}` : "";
+    const params = new URLSearchParams();
+    if (caption) params.set("caption", caption);
+    if (round) params.set("round", String(round));
+    const q = params.size ? `?${params}` : "";
     const res = await this.send("POST", `/api/reviews/${encodeURIComponent(reviewRef)}/assets${q}`, form);
     return (await res.json()) as ReviewAssetInfo;
   }

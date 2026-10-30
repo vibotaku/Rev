@@ -75,12 +75,24 @@ rev tasks                                   # what's assigned to me
 rev task show WEB-12 --save-snapshots ./fb  # description, review feedback, annotated frames
 rev task start WEB-12                       # → in_progress
 # … do the work, record a video / take screenshots …
-rev review create -p WEB -t "Fix CTA overlap" --task WEB-12 \
-  --description-file notes.md --caption-each demo.mp4 after.png
-                                            # publishes WEB-R7 and moves WEB-12 to in_review
-rev review show WEB-R7                      # read the humans' feedback
-rev review reply <commentId> "Fixed in the next kit" --review WEB-R7
+# WEB-12 came from review WEB-R3, so deliver the fix as the next round of WEB-R3:
+rev review round WEB-R3 --notes-file notes.md --caption-each demo.mp4 after.png
+                                            # submits round 2 of WEB-R3 and moves WEB-12 to in_review
+rev review show WEB-R3                      # read the feedback, round by round
+rev review reply <commentId> "Fixed in round 2" --review WEB-R3
+# New work that did not come from a review gets its own review instead:
+rev review create -p WEB -t "Fix CTA overlap" --task WEB-12 --caption-each demo.mp4
 ```
+
+### Rounds and mark notes
+
+- **Rounds.** A review happens in rounds. Round 1 is the original kit. When you have addressed the accepted feedback, submit the next round on the **same** review with new media and notes on what changed.
+  - The round lists the tasks it addresses: by default, your open tasks from that review; or pass `--task` / `task_refs`.
+  - Submitting reopens the review and moves those tasks to `in_review`.
+  - Comments belong to the round they were made on.
+  - Only one draft round can exist at a time. If a submission fails part-way, the CLI/MCP delete the draft so you can retry.
+- **Mark notes.** Besides the overall comment on a frame, reviewers can attach a note to each mark (pin, box, arrow, drawing). Each note is its own comment: `#2 [accepted] Logo is blurry` in `rev review show`, or `mark #2 of comment …` in a task. It has its own snapshot of just that mark.
+- **Decisions.** The review owner accepts or rejects every comment and every mark note separately. Only accepted ones become tasks.
 
 The review's owner (your linked human) then approves it and closes the task, or accepts more comments, which come back to you as new tasks. For small, self-verifiable work you can close the task yourself with `rev task done WEB-12 --note "…"`; it then appears to humans as agent-closed until someone reviews it.
 
@@ -99,7 +111,8 @@ The review's owner (your linked human) then approves it and closes the task, or 
 | `rev task ready <ref> [--note <text>]` | Hand back for review without a kit (`in_review`) |
 | `rev task comment <ref> <text>` | Progress notes and questions |
 | `rev review create -p <KEY> -t <title> [options] <files…>` | Upload a review kit. Options: `--task`, `-d/--description`, `--description-file`, `--caption` (repeatable), `--caption-each`, `--draft` |
-| `rev review show <ref>` | Media and comment threads |
+| `rev review round <ref> [-n/--notes <md>] [--notes-file <f>] [--task <ref>]… [--caption <t>]… [--caption-each] <files…>` | Submit the next round of a review after addressing its feedback |
+| `rev review show <ref>` | The review round by round: notes, media, comments, mark notes (`#n`), replies |
 | `rev review comment <ref> <text>` | General comment |
 | `rev review reply <commentId> <text> --review <ref>` | Reply in a thread |
 | `rev mcp` | Run the MCP server on stdio |
@@ -119,8 +132,9 @@ The Claude Code plugin registers this server automatically. Without the plugin, 
 | `get_task` | Task details plus annotated snapshot **images** of the feedback (up to 4) |
 | `update_task_status` | Any status, with an optional note. `done` and `cancelled` are recorded as agent-closed. |
 | `comment_on_task` | Progress notes and questions |
-| `create_review` | Upload local files as a review kit, optionally linked to a task, published by default |
-| `get_review` | Feedback on a review (optionally with snapshots) |
+| `create_review` | Start a new review from local files, optionally linked to a task, published by default |
+| `submit_review_round` | Submit the next round of an existing review: new media, notes, addressed tasks (default: your open tasks from it) |
+| `get_review` | Feedback on a review, round by round, including mark notes (optionally with snapshots) |
 | `reply_to_review_comment`, `comment_on_review` | Answer reviewers |
 
 ## Raw API
@@ -138,8 +152,11 @@ Everything the CLI does is plain HTTP with `Authorization: Bearer rev_…`:
 | `POST /api/projects/WEB/reviews` `{"title","description","taskRef"}` | Create a draft review |
 | `POST /api/reviews/WEB-R7/assets?caption=…` | Upload one file (multipart field `file`) |
 | `PATCH /api/reviews/WEB-R7` `{"status":"open"}` | Publish |
-| `GET /api/reviews/WEB-R7` | Review with assets and comments |
-| `POST /api/reviews/WEB-R7/comments` `{"body","parentId"}` | Comment or reply |
+| `GET /api/reviews/WEB-R7` | Review with `rounds`, assets (`roundNumber`) and comments (`roundNumber`, `markOf`, `markIndex`) |
+| `POST /api/reviews/WEB-R7/comments` `{"body","parentId","marks":[{"index","body"}]}` | Comment, reply (to a comment or a mark note), or a frame comment with per-mark notes |
+| `POST /api/reviews/WEB-R7/rounds` `{"notes","taskRefs"}` | Start the next round as a draft |
+| `POST /api/reviews/WEB-R7/assets?round=2` | Upload into that round |
+| `POST /api/reviews/WEB-R7/rounds/2/submit` | Submit it (needs at least one asset); `DELETE …/rounds/2` discards a draft |
 | `GET /api/media/assets/<id>[?download=1]`, `GET /api/media/snapshots/<commentId>` | Media |
 
 Annotation coordinates are normalised to `0..1` of the media's width and height. Shapes are `pin {x,y}`, `rect {x,y,w,h}`, `arrow {x1,y1,x2,y2}`, and `pen {points:[[x,y],…]}`.

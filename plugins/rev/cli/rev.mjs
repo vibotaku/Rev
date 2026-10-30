@@ -30483,12 +30483,30 @@ var assetUpdateBody = external_exports.object({
   position: external_exports.number().int().min(0).optional()
 });
 var reviewCommentCreateBody = external_exports.object({
+  /** The overall comment on the frame/screen. */
   body: external_exports.string().trim().min(1).max(2e4),
   assetId: external_exports.uuid().nullable().default(null),
   parentId: external_exports.uuid().nullable().default(null),
   timestampMs: external_exports.number().int().min(0).nullable().default(null),
-  annotation: annotationSchema.nullable().default(null)
+  annotation: annotationSchema.nullable().default(null),
+  /**
+   * Notes on individual marks: `index` is the 0-based position of the shape in
+   * `annotation.shapes`. Each becomes its own comment the owner decides on.
+   */
+  marks: external_exports.array(external_exports.object({ index: external_exports.number().int().min(0), body: external_exports.string().trim().min(1).max(5e3) })).max(50).default([]),
+  /** Round to comment on; defaults to the media's round, else the latest round. */
+  round: external_exports.number().int().min(1).optional()
 });
+var reviewRoundCreateBody = external_exports.object({
+  /** What changed since the previous round (markdown). */
+  notes: markdown.default(""),
+  /**
+   * Tasks this round addresses ("WEB-12"). When omitted: the open tasks from
+   * this review that are assigned to you (agents) or all of them (humans).
+   */
+  taskRefs: external_exports.array(external_exports.string().trim().min(1).max(40)).max(100).optional()
+});
+var reviewRoundUpdateBody = external_exports.object({ notes: markdown });
 var reviewCommentUpdateBody = external_exports.object({
   body: external_exports.string().trim().min(1).max(2e4).optional(),
   status: external_exports.enum(COMMENT_STATUSES).optional()
@@ -30635,16 +30653,38 @@ var RevApi = class _RevApi {
   updateReviewStatus(ref, status) {
     return this.request("PATCH", `/api/reviews/${encodeURIComponent(ref)}`, { status });
   }
+  /** Posts a comment; `marks` adds a separate note per mark (0-based shape index). Returns the comment plus its mark comments. */
   commentOnReview(ref, input2) {
-    return this.request("POST", `/api/reviews/${encodeURIComponent(ref)}/comments`, input2);
+    return this.request(
+      "POST",
+      `/api/reviews/${encodeURIComponent(ref)}/comments`,
+      input2
+    );
   }
-  /** Streams a file from disk as a multipart upload. */
-  async uploadAsset(reviewRef, filePath, caption) {
+  /** Starts the next round of a review as a draft. Without taskRefs the server links your open tasks from this review. */
+  createRound(reviewRef, input2) {
+    return this.request("POST", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds`, input2);
+  }
+  submitRound(reviewRef, number4) {
+    return this.request("POST", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds/${number4}/submit`);
+  }
+  updateRoundNotes(reviewRef, number4, notes) {
+    return this.request("PATCH", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds/${number4}`, { notes });
+  }
+  /** Discards a draft round and its media. */
+  deleteRound(reviewRef, number4) {
+    return this.request("DELETE", `/api/reviews/${encodeURIComponent(reviewRef)}/rounds/${number4}`);
+  }
+  /** Streams a file from disk as a multipart upload, into `round` (default: the latest round). */
+  async uploadAsset(reviewRef, filePath, caption, round) {
     const type = MEDIA_EXTENSIONS[path2.extname(filePath).toLowerCase()] ?? "application/octet-stream";
     const blob = await openAsBlob(filePath, { type });
     const form = new FormData();
     form.append("file", blob, path2.basename(filePath));
-    const q = caption ? `?caption=${encodeURIComponent(caption)}` : "";
+    const params = new URLSearchParams();
+    if (caption) params.set("caption", caption);
+    if (round) params.set("round", String(round));
+    const q = params.size ? `?${params}` : "";
     const res = await this.send("POST", `/api/reviews/${encodeURIComponent(reviewRef)}/assets${q}`, form);
     return await res.json();
   }
@@ -30712,24 +30752,41 @@ function formatTaskLine(t) {
   const prio = t.priority !== "none" ? ` [${t.priority}]` : "";
   return `${t.ref.padEnd(10)} ${statusLabel(t).padEnd(12)}${prio} ${t.title}`;
 }
-function formatComment(api, c, assetNames, replies = [], indent = "") {
-  const where = [
+function commentHeader(c, assetNames) {
+  return [
     c.assetId ? assetNames.get(c.assetId) ?? "asset" : null,
     c.timestampMs != null ? `@ ${formatTimestamp(c.timestampMs)}` : null
   ].filter(Boolean).join(" ");
-  const lines = [`${indent}- [${c.status}] ${who(c.author)}${where ? ` on ${where}` : ""} (comment ${c.id})`];
-  for (const l of c.body.split("\n")) lines.push(`${indent}    ${l}`);
+}
+function commentDetails(api, c, indent) {
+  const lines = [];
   const shapes = describeAnnotation(c.annotation);
-  if (shapes) lines.push(`${indent}    annotation: ${shapes}`);
-  if (c.snapshotUrl) lines.push(`${indent}    snapshot: ${api.url(c.snapshotUrl)}`);
+  if (shapes) lines.push(`${indent}annotation: ${shapes}`);
+  if (c.snapshotUrl) lines.push(`${indent}snapshot: ${api.url(c.snapshotUrl)}`);
   if (c.task) {
     const agentClosed = c.task.closureReview === "agent" ? ", agent-closed" : "";
-    lines.push(`${indent}    task: ${c.task.ref} (${TASK_STATUS_LABELS[c.task.status]}${agentClosed})`);
+    lines.push(`${indent}task: ${c.task.ref} (${TASK_STATUS_LABELS[c.task.status]}${agentClosed})`);
   }
-  for (const r of replies) {
-    lines.push(`${indent}    \u21B3 ${who(r.author)}: ${r.body.replace(/\n+/g, " ")} (comment ${r.id})`);
+  return lines;
+}
+var replyLine = (r, indent) => `${indent}\u21B3 ${who(r.author)}: ${r.body.replace(/\n+/g, " ")} (comment ${r.id})`;
+function formatComment(api, c, assetNames, replies = [], indent = "", marks = [], all = []) {
+  const where = commentHeader(c, assetNames);
+  const mark = c.markIndex != null ? `mark #${c.markIndex} of comment ${c.markOf}: ` : "";
+  const lines = [`${indent}- [${c.status}] ${mark}${who(c.author)}${where ? ` on ${where}` : ""} (comment ${c.id})`];
+  for (const l of c.body.split("\n")) lines.push(`${indent}    ${l}`);
+  lines.push(...commentDetails(api, c, `${indent}    `));
+  for (const r of replies) lines.push(replyLine(r, `${indent}    `));
+  for (const m of marks) {
+    lines.push(`${indent}    #${m.markIndex} [${m.status}] ${m.body.replace(/\n+/g, " ")} (comment ${m.id})`);
+    lines.push(...commentDetails(api, m, `${indent}        `));
+    for (const r of all.filter((x) => x.parentId === m.id)) lines.push(replyLine(r, `${indent}        `));
   }
   return lines.join("\n");
+}
+function formatThread(api, c, all, assetNames, indent = "") {
+  const marks = all.filter((x) => x.markOf === c.id).sort((a, b) => (a.markIndex ?? 0) - (b.markIndex ?? 0));
+  return formatComment(api, c, assetNames, all.filter((x) => x.parentId === c.id), indent, marks, all);
 }
 function formatTask(api, t, assetNames = /* @__PURE__ */ new Map()) {
   const lines = [
@@ -30745,7 +30802,9 @@ function formatTask(api, t, assetNames = /* @__PURE__ */ new Map()) {
   }
   if (t.deliveries.length) {
     lines.push("", "Reviews submitted for this task:");
-    for (const d of t.deliveries) lines.push(`- ${d.ref} ${d.title} (${REVIEW_STATUS_LABELS[d.status]})`);
+    for (const d of t.deliveries) {
+      lines.push(`- ${d.ref}${d.round ? ` round ${d.round}` : ""} ${d.title} (${REVIEW_STATUS_LABELS[d.status]})`);
+    }
   }
   const notes = t.activity.filter((a) => a.kind === "comment");
   if (notes.length) {
@@ -30756,25 +30815,35 @@ function formatTask(api, t, assetNames = /* @__PURE__ */ new Map()) {
 }
 function formatReview(api, r) {
   const assetNames = new Map(r.assets.map((a) => [a.id, a.filename]));
+  const rounds = r.rounds?.length ? r.rounds : [{ number: 1, notes: "", createdBy: r.createdBy, submittedAt: r.publishedAt, addressedTasks: [] }];
   const lines = [
     `${r.ref}: ${r.title}`,
-    `Status: ${REVIEW_STATUS_LABELS[r.status]} \xB7 Owner: ${who(r.owner)} \xB7 Submitted by: ${who(r.createdBy)}`,
+    `Status: ${REVIEW_STATUS_LABELS[r.status]} \xB7 Owner: ${who(r.owner)} \xB7 Submitted by: ${who(r.createdBy)} \xB7 Round ${r.currentRound ?? 1} of ${rounds.length}`,
     `URL: ${api.webUrl("reviews", r.projectKey, r.number)}`
   ];
   if (r.task) lines.push(`Delivers task: ${r.task.ref} \u2014 ${r.task.title}`);
   if (r.description.trim()) lines.push("", r.description.trim());
-  lines.push("", `Assets (${r.assets.length}):`);
-  for (const a of r.assets) {
-    const dims = a.width && a.height ? ` ${a.width}\xD7${a.height}` : "";
-    const dur = a.durationMs != null ? ` ${formatTimestamp(a.durationMs)}` : "";
-    const cap = a.caption ? ` \u2014 ${a.caption}` : "";
-    const err = a.error ? ` (error: ${a.error})` : "";
-    lines.push(`- ${a.filename} [${a.kind}, ${a.status}${dims}${dur}]${cap}${err}`);
-  }
-  const top = r.comments.filter((c) => !c.parentId);
-  lines.push("", `Comments (${top.length}):`);
-  for (const c of top) {
-    lines.push(formatComment(api, c, assetNames, r.comments.filter((x) => x.parentId === c.id)));
+  for (const round of rounds) {
+    const state = round.submittedAt ? `submitted ${round.submittedAt.slice(0, 16).replace("T", " ")}` : "draft (not submitted yet)";
+    lines.push("", `== Round ${round.number} \u2014 by ${who(round.createdBy)}, ${state}`);
+    if (round.notes.trim()) lines.push(...round.notes.trim().split("\n").map((l) => `  ${l}`));
+    if (round.addressedTasks.length) {
+      lines.push(`  Addresses: ${round.addressedTasks.map((t) => `${t.ref} ${t.title} (${TASK_STATUS_LABELS[t.status]})`).join("; ")}`);
+    }
+    const assets = r.assets.filter((a) => (a.roundNumber ?? 1) === round.number);
+    lines.push(`  Assets (${assets.length}):`);
+    for (const a of assets) {
+      const dims = a.width && a.height ? ` ${a.width}\xD7${a.height}` : "";
+      const dur = a.durationMs != null ? ` ${formatTimestamp(a.durationMs)}` : "";
+      const cap = a.caption ? ` \u2014 ${a.caption}` : "";
+      const err = a.error ? ` (error: ${a.error})` : "";
+      lines.push(`  - ${a.filename} [${a.kind}, ${a.status}${dims}${dur}]${cap}${err}`);
+    }
+    const inRound = r.comments.filter((c) => (c.roundNumber ?? 1) === round.number);
+    const top = inRound.filter((c) => !c.parentId && !c.markOf);
+    const decisions = inRound.filter((c) => !c.parentId).length;
+    lines.push(`  Comments (${top.length}, ${decisions} to decide incl. mark notes):`);
+    for (const c of top) lines.push(formatThread(api, c, inRound, assetNames, "  "));
   }
   if (r.tasks.length) {
     lines.push("", "Tasks created from this review:");
@@ -30786,8 +30855,8 @@ function formatReview(api, r) {
 // src/kit.ts
 import { access } from "node:fs/promises";
 import path4 from "node:path";
-async function createReviewKit(api, input2) {
-  for (const f of input2.files) {
+async function checkFiles(files) {
+  for (const f of files) {
     if (!MEDIA_EXTENSIONS[path4.extname(f).toLowerCase()]) {
       throw new Error(`Unsupported file type: ${f} (use png/jpg/webp/gif images or mp4/webm/mov/mkv videos)`);
     }
@@ -30795,6 +30864,9 @@ async function createReviewKit(api, input2) {
       throw new Error(`File not found: ${f}`);
     });
   }
+}
+async function createReviewKit(api, input2) {
+  await checkFiles(input2.files);
   const draft = await api.createReview(input2.project, {
     title: input2.title,
     description: input2.description ?? "",
@@ -30808,6 +30880,24 @@ async function createReviewKit(api, input2) {
   }
   if (input2.publish === false) return api.review(draft.ref);
   return api.updateReviewStatus(draft.ref, "open");
+}
+async function submitReviewRound(api, reviewRef, input2) {
+  if (!input2.files.length) throw new Error("A round needs at least one screenshot or video");
+  await checkFiles(input2.files);
+  const drafted = await api.createRound(reviewRef, { notes: input2.notes ?? "", taskRefs: input2.taskRefs });
+  const number4 = drafted.rounds.at(-1).number;
+  input2.onProgress?.(`Started draft round ${number4} of ${drafted.ref}`);
+  try {
+    for (const [i, file2] of input2.files.entries()) {
+      input2.onProgress?.(`Uploading ${path4.basename(file2)} (${i + 1}/${input2.files.length})`);
+      await api.uploadAsset(drafted.ref, file2, input2.captions?.[i], number4);
+    }
+    const review = await api.submitRound(drafted.ref, number4);
+    return { review, round: review.rounds.find((r) => r.number === number4) };
+  } catch (err) {
+    await api.deleteRound(drafted.ref, number4).catch(() => void 0);
+    throw err;
+  }
 }
 async function fetchSnapshots(api, comments, maxImages = 4, maxBytes = 5 * 1024 * 1024) {
   const out = [];
@@ -40525,12 +40615,16 @@ var INSTRUCTIONS = `Rev is the team's task and review tracker. You act as an age
 Workflow:
 1. Pull work: call list_my_tasks, then get_task for details. Tasks created from review feedback include the
    reviewers' comments, video timestamps, annotation descriptions and annotated snapshot images; address every one.
+   A comment can carry notes on individual marks ("mark #2 of comment \u2026"): each mark is its own piece of feedback.
 2. Call update_task_status with "in_progress" when you start.
-3. When done, submit evidence with create_review: screenshots (png/jpg/webp/gif) and screen recordings
-   (mp4/webm/mov/mkv) given as local file paths, plus a description of what changed and how to verify it.
-   Pass task_ref so the review is linked to the task; publishing it moves the task to "in_review".
-4. Humans annotate and comment on the review. Use get_review to read feedback and reply_to_review_comment to answer
-   questions. Accepted feedback comes back to you as new tasks.
+3. When done, deliver evidence: screenshots (png/jpg/webp/gif) and screen recordings (mp4/webm/mov/mkv) given as
+   local file paths, plus notes on what changed and how to verify it.
+   - Task came from a review ("From review: WEB-R3" in get_task): submit the fix as the NEXT ROUND of that same
+     review with submit_review_round. Do not open a new review for it. The round moves the task to "in_review".
+   - New work with no source review: create_review, passing task_ref to link it to the task.
+4. Humans annotate and comment on each round. The review owner accepts or rejects every comment and every mark note
+   separately; only accepted ones become tasks for you. Use get_review to read feedback and reply_to_review_comment to
+   answer questions (you can reply to a mark note too).
 
 Rules: you cannot approve reviews, accept or reject comments, create tasks or assign work; those decisions belong to
 the humans. You may close your own tasks ("done"/"cancelled") when nothing needs a human to look at it; such closures are
@@ -40639,7 +40733,7 @@ function createMcpServer(client) {
   server.registerTool(
     "create_review",
     {
-      description: "Submit a review kit: upload screenshots and screen recordings from local file paths so humans can annotate and comment. Link it to the task you worked on with task_ref.",
+      description: "Start a NEW review: upload screenshots and screen recordings from local file paths so humans can annotate and comment. Link it to the task you worked on with task_ref. If the task came from an existing review, use submit_review_round on that review instead.",
       inputSchema: {
         project: external_exports.string().describe('Project key, e.g. "WEB"'),
         title: external_exports.string().min(1),
@@ -40669,9 +40763,37 @@ Owner: ${review.owner.name}`
     })
   );
   server.registerTool(
+    "submit_review_round",
+    {
+      description: "Submit the next round of an existing review after addressing its feedback: new screenshots/recordings plus notes on what changed. Reopens the review for its owner and moves the addressed tasks to in_review. Use this (not create_review) when a task came from a review.",
+      inputSchema: {
+        review_ref: external_exports.string().describe(`Review to continue, e.g. "WEB-R3" (the task's source review)`),
+        notes: external_exports.string().default("").describe("Markdown: what changed since the previous round and how to verify it"),
+        files: external_exports.array(external_exports.string()).min(1).describe("Absolute paths to images (png/jpg/webp/gif) or videos (mp4/webm/mov/mkv)"),
+        captions: external_exports.array(external_exports.string()).optional().describe("Optional captions aligned with files"),
+        task_refs: external_exports.array(external_exports.string()).optional().describe("Tasks this round addresses; default: your open tasks that came from this review")
+      }
+    },
+    (args) => guard(async () => {
+      const api = await getApi();
+      const { review, round } = await submitReviewRound(api, args.review_ref, {
+        notes: args.notes,
+        files: args.files.map((f) => path5.resolve(f)),
+        captions: args.captions,
+        taskRefs: args.task_refs
+      });
+      const addressed = round.addressedTasks.map((t) => `${t.ref} (${TASK_STATUS_LABELS[t.status]})`).join(", ") || "no tasks";
+      return text(
+        `Submitted round ${round.number} of ${review.ref} with ${round.assetCount} asset(s). Addresses ${addressed}.
+URL: ${api.webUrl("reviews", review.projectKey, review.number)}
+Owner: ${review.owner.name}`
+      );
+    })
+  );
+  server.registerTool(
     "get_review",
     {
-      description: "Read a review: assets, comment threads with status, timestamps and annotations.",
+      description: "Read a review round by round: notes, assets, comments with their status (open/accepted/rejected/resolved), mark notes (#n), replies, timestamps and annotations.",
       inputSchema: {
         ref: external_exports.string().describe('Review reference such as "WEB-R3"'),
         include_snapshots: external_exports.boolean().default(false).describe("Attach annotated snapshot images (max 4)")
@@ -40698,7 +40820,7 @@ Owner: ${review.owner.name}`
       description: "Reply in the thread of a review comment (answer a question, explain a decision).",
       inputSchema: {
         review_ref: external_exports.string().describe('Review reference such as "WEB-R3"'),
-        comment_id: external_exports.string().describe("Id of the top-level comment to reply to"),
+        comment_id: external_exports.string().describe("Id of the comment or mark note to reply to"),
         body: external_exports.string().min(1)
       }
     },
@@ -40808,7 +40930,7 @@ config: ${configPath(io.env)}`);
       () => projects.length ? projects.map((p) => `${p.key.padEnd(10)} ${p.name} (${p.myRole}, ${p.counts.openTasks} open tasks)`).join("\n") : "No projects yet. Ask your linked human to add this agent to a project."
     );
   });
-  const review = program2.command("review").description("Create and read review kits");
+  const review = program2.command("review").description("Create review kits, submit new rounds, read feedback");
   review.command("create").description("Upload screenshots/videos as a review kit and publish it").argument("<files...>", "images (png/jpg/webp/gif) and videos (mp4/webm/mov/mkv)").requiredOption("-p, --project <key>", "project key, e.g. WEB").requiredOption("-t, --title <title>", "review title").option("-d, --description <markdown>", "what changed and how to verify it").option("--description-file <file>", "read the description from a markdown file").option("--task <ref>", "task this review delivers, e.g. WEB-12").option("--caption <text>", "caption for the next file (repeat once per file, in order)", collect).option("--caption-each", "caption each file with its file name").option("--draft", "keep the review as a draft instead of publishing").action(async (files, opts, cmd) => {
     const client = await api();
     const description = opts.descriptionFile ? await readFile2(opts.descriptionFile, "utf8") : opts.description ?? "";
@@ -40831,7 +40953,27 @@ config: ${configPath(io.env)}`);
 ${url2}`
     );
   });
-  review.command("show").description("Show a review with its assets and comment threads").argument("<ref>", "review reference, e.g. WEB-R3").action(async (ref, _opts, cmd) => {
+  review.command("round").description("Submit the next round of a review after addressing its feedback (new screenshots/videos)").argument("<ref>", "review to continue, e.g. WEB-R3").argument("<files...>", "images (png/jpg/webp/gif) and videos (mp4/webm/mov/mkv)").option("-n, --notes <markdown>", "what changed since the previous round and how to verify it").option("--notes-file <file>", "read the notes from a markdown file").option("--task <ref>", "task this round addresses (repeatable; default: your open tasks from this review)", collect).option("--caption <text>", "caption for the next file (repeat once per file, in order)", collect).option("--caption-each", "caption each file with its file name").action(async (ref, files, opts, cmd) => {
+    const client = await api();
+    const notes = opts.notesFile ? await readFile2(opts.notesFile, "utf8") : opts.notes ?? "";
+    const captions = opts.captionEach ? files.map((f) => path6.basename(f, path6.extname(f))) : opts.caption ?? [];
+    const { review: r, round } = await submitReviewRound(client, ref, {
+      notes,
+      files,
+      captions,
+      taskRefs: opts.task,
+      onProgress: (m) => io.err(m)
+    });
+    const url2 = client.webUrl("reviews", r.projectKey, r.number);
+    const addressed = round.addressedTasks.map((t) => `${t.ref} (${TASK_STATUS_LABELS[t.status]})`).join(", ") || "no tasks";
+    emit(
+      cmd,
+      { review: r, round, webUrl: url2 },
+      () => `Submitted round ${round.number} of ${r.ref} (${round.assetCount} assets). Addresses ${addressed}
+${url2}`
+    );
+  });
+  review.command("show").description("Show a review round by round: notes, assets, comments, mark notes and replies").argument("<ref>", "review reference, e.g. WEB-R3").action(async (ref, _opts, cmd) => {
     const client = await api();
     const r = await client.review(ref);
     emit(cmd, r, () => formatReview(client, r));
@@ -40840,7 +40982,7 @@ ${url2}`
     const c = await (await api()).commentOnReview(ref, { body: text2 });
     emit(cmd, c, () => `Commented on ${c.reviewRef} (${c.id})`);
   });
-  review.command("reply").description("Reply to a review comment thread").argument("<commentId>", "id of the comment to reply to (see `rev review show`)").argument("<text>", "reply text (markdown)").requiredOption("-r, --review <ref>", "review the comment belongs to, e.g. WEB-R3").action(async (commentId, text2, opts, cmd) => {
+  review.command("reply").description("Reply to a review comment thread").argument("<commentId>", "id of the comment or mark note to reply to (see `rev review show`)").argument("<text>", "reply text (markdown)").requiredOption("-r, --review <ref>", "review the comment belongs to, e.g. WEB-R3").action(async (commentId, text2, opts, cmd) => {
     const c = await (await api()).commentOnReview(opts.review, { body: text2, parentId: commentId });
     emit(cmd, c, () => `Replied on ${c.reviewRef} (${c.id})`);
   });

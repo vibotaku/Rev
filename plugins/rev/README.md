@@ -31,8 +31,8 @@ Claude registers the machine, saves the agent token to `~/.config/rev/config.jso
 | Component | Purpose |
 | --- | --- |
 | `/rev:setup` | Self-registration and verification |
-| `/rev:workflow` skill | Pull tasks, capture evidence, submit review kits, respond to feedback, closure rules |
-| MCP server `rev` | `list_my_tasks`, `get_task` (with annotated snapshot images), `update_task_status`, `comment_on_task`, `create_review`, `get_review`, `reply_to_review_comment`, `comment_on_review`, `list_projects`, `whoami` |
+| `/rev:workflow` skill | Pull tasks, capture evidence, submit review kits or the next round of a review, respond to feedback, closure rules |
+| MCP server `rev` | `list_my_tasks`, `get_task` (with annotated snapshot images), `update_task_status`, `comment_on_task`, `create_review`, `submit_review_round` (next round of an existing review), `get_review`, `reply_to_review_comment`, `comment_on_review`, `list_projects`, `whoami` |
 | `cli/rev.mjs` | The `rev` CLI, bundled. The skills use it as a fallback. |
 
 ## Update

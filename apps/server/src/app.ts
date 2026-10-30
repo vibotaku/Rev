@@ -27,6 +27,7 @@ import ldapAdminRoutes from "./routes/ldap-admin";
 import mediaRoutes from "./routes/media";
 import projectRoutes from "./routes/projects";
 import reviewRoutes from "./routes/reviews";
+import roundRoutes from "./routes/rounds";
 import taskRoutes from "./routes/tasks";
 
 export interface CreateAppOptions {
@@ -136,6 +137,7 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
     projectRoutes,
     taskRoutes,
     reviewRoutes,
+    roundRoutes,
     mediaRoutes,
     dashboardRoutes,
   ]) {

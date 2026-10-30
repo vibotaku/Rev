@@ -2,11 +2,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Argument, Command } from "commander";
-import { TASK_STATUSES, type TaskStatus } from "@rev/shared";
+import { TASK_STATUS_LABELS, TASK_STATUSES, type TaskStatus } from "@rev/shared";
 import { RevApi } from "./api";
 import { configPath, loadConfig, saveConfig } from "./config";
 import { formatReview, formatTask, formatTaskLine } from "./format";
-import { assetNamesFor, createReviewKit } from "./kit";
+import { assetNamesFor, createReviewKit, submitReviewRound } from "./kit";
 import { runMcpServer } from "./mcp";
 import { VERSION } from "./version";
 
@@ -130,7 +130,7 @@ export function buildProgram(io: Io = defaultIo) {
 
   // ---- reviews ---------------------------------------------------------------
 
-  const review = program.command("review").description("Create and read review kits");
+  const review = program.command("review").description("Create review kits, submit new rounds, read feedback");
 
   review
     .command("create")
@@ -167,8 +167,38 @@ export function buildProgram(io: Io = defaultIo) {
     });
 
   review
+    .command("round")
+    .description("Submit the next round of a review after addressing its feedback (new screenshots/videos)")
+    .argument("<ref>", "review to continue, e.g. WEB-R3")
+    .argument("<files...>", "images (png/jpg/webp/gif) and videos (mp4/webm/mov/mkv)")
+    .option("-n, --notes <markdown>", "what changed since the previous round and how to verify it")
+    .option("--notes-file <file>", "read the notes from a markdown file")
+    .option("--task <ref>", "task this round addresses (repeatable; default: your open tasks from this review)", collect)
+    .option("--caption <text>", "caption for the next file (repeat once per file, in order)", collect)
+    .option("--caption-each", "caption each file with its file name")
+    .action(async (ref: string, files: string[], opts, cmd: Command) => {
+      const client = await api();
+      const notes = opts.notesFile ? await readFile(opts.notesFile, "utf8") : (opts.notes ?? "");
+      const captions: (string | undefined)[] = opts.captionEach
+        ? files.map((f) => path.basename(f, path.extname(f)))
+        : (opts.caption ?? []);
+      const { review: r, round } = await submitReviewRound(client, ref, {
+        notes,
+        files,
+        captions,
+        taskRefs: opts.task,
+        onProgress: (m) => io.err(m),
+      });
+      const url = client.webUrl("reviews", r.projectKey, r.number);
+      const addressed = round.addressedTasks.map((t) => `${t.ref} (${TASK_STATUS_LABELS[t.status]})`).join(", ") || "no tasks";
+      emit(cmd, { review: r, round, webUrl: url }, () =>
+        `Submitted round ${round.number} of ${r.ref} (${round.assetCount} assets). Addresses ${addressed}\n${url}`,
+      );
+    });
+
+  review
     .command("show")
-    .description("Show a review with its assets and comment threads")
+    .description("Show a review round by round: notes, assets, comments, mark notes and replies")
     .argument("<ref>", "review reference, e.g. WEB-R3")
     .action(async (ref: string, _opts, cmd: Command) => {
       const client = await api();
@@ -189,7 +219,7 @@ export function buildProgram(io: Io = defaultIo) {
   review
     .command("reply")
     .description("Reply to a review comment thread")
-    .argument("<commentId>", "id of the comment to reply to (see `rev review show`)")
+    .argument("<commentId>", "id of the comment or mark note to reply to (see `rev review show`)")
     .argument("<text>", "reply text (markdown)")
     .requiredOption("-r, --review <ref>", "review the comment belongs to, e.g. WEB-R3")
     .action(async (commentId: string, text: string, opts: { review: string }, cmd: Command) => {

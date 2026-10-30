@@ -12,7 +12,7 @@ import {
 } from "@rev/shared";
 import type { Db } from "../db";
 import { closureReviewOf } from "./tasks";
-import { projects, reviewAssets, reviewComments, reviews, tasks, users } from "../db/schema";
+import { projects, reviewAssets, reviewComments, reviewRounds, reviews, tasks, users } from "../db/schema";
 
 type UserRow = typeof users.$inferSelect;
 type TaskRow = typeof tasks.$inferSelect;
@@ -106,9 +106,21 @@ export async function serializeTasks(db: Db, rows: TaskRow[]): Promise<TaskInfo[
   });
 }
 
-export function serializeAsset(a: AssetRow): ReviewAssetInfo {
+/** roundId -> round number, for the given round ids. */
+export async function roundNumbers(db: Db, roundIds: (string | null | undefined)[]) {
+  const ids = unique(roundIds);
+  const map = new Map<string, number>();
+  if (!ids.length) return map;
+  const rows = await db.select({ id: reviewRounds.id, number: reviewRounds.number }).from(reviewRounds).where(inArray(reviewRounds.id, ids));
+  for (const r of rows) map.set(r.id, r.number);
+  return map;
+}
+
+export function serializeAsset(a: AssetRow, roundNumber: number): ReviewAssetInfo {
   return {
     id: a.id,
+    roundId: a.roundId,
+    roundNumber,
     kind: a.kind,
     status: a.status,
     filename: a.filename,
@@ -129,7 +141,7 @@ export function serializeAsset(a: AssetRow): ReviewAssetInfo {
 export async function serializeReviews(db: Db, rows: ReviewRow[]): Promise<ReviewInfo[]> {
   if (!rows.length) return [];
   const ids = rows.map((r) => r.id);
-  const [userMap, keys, assetStats, commentStats, linkedTasks] = await Promise.all([
+  const [userMap, keys, assetStats, commentStats, linkedTasks, roundStats] = await Promise.all([
     loadUsers(db, rows.flatMap((r) => [r.createdBy, r.ownerId])),
     projectKeys(db, unique(rows.map((r) => r.projectId))),
     db
@@ -166,7 +178,13 @@ export async function serializeReviews(db: Db, rows: ReviewRow[]): Promise<Revie
         .innerJoin(projects, eq(projects.id, tasks.projectId))
         .where(inArray(tasks.id, taskIds));
     })(),
+    db
+      .select({ reviewId: reviewRounds.reviewId, current: sql<number | null>`max(${reviewRounds.number}) filter (where ${reviewRounds.submittedAt} is not null)` })
+      .from(reviewRounds)
+      .where(inArray(reviewRounds.reviewId, ids))
+      .groupBy(reviewRounds.reviewId),
   ]);
+  const currentRoundBy = new Map(roundStats.map((s) => [s.reviewId, Number(s.current ?? 1)]));
   const assetsBy = new Map(assetStats.map((s) => [s.reviewId, s]));
   const commentsBy = new Map(commentStats.map((s) => [s.reviewId, s]));
   const taskBy = new Map(linkedTasks.map((t) => [t.id, t]));
@@ -191,6 +209,7 @@ export async function serializeReviews(db: Db, rows: ReviewRow[]): Promise<Revie
       assetCount: Number(a?.n ?? 0),
       commentCount: Number(c?.n ?? 0),
       openCommentCount: Number(c?.open ?? 0),
+      currentRound: currentRoundBy.get(r.id) ?? 1,
       thumbnailUrl: a?.firstPoster ? `/api/media/assets/${a.firstPoster}/poster` : null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -203,7 +222,7 @@ export async function serializeComments(db: Db, rows: CommentRow[]): Promise<Rev
   if (!rows.length) return [];
   const reviewIds = unique(rows.map((c) => c.reviewId));
   const taskIds = unique(rows.map((c) => c.taskId));
-  const [userMap, reviewRows, taskRows] = await Promise.all([
+  const [userMap, reviewRows, taskRows, rounds] = await Promise.all([
     loadUsers(db, rows.flatMap((c) => [c.authorId, c.decidedBy])),
     db
       .select({ id: reviews.id, number: reviews.number, key: projects.key })
@@ -223,6 +242,7 @@ export async function serializeComments(db: Db, rows: CommentRow[]): Promise<Rev
           .innerJoin(projects, eq(projects.id, tasks.projectId))
           .where(inArray(tasks.id, taskIds))
       : Promise.resolve([]),
+    roundNumbers(db, rows.map((c) => c.roundId)),
   ]);
   const refBy = new Map(reviewRows.map((r) => [r.id, reviewRef(r.key, r.number)]));
   const taskBy = new Map(
@@ -232,8 +252,11 @@ export async function serializeComments(db: Db, rows: CommentRow[]): Promise<Rev
     id: c.id,
     reviewId: c.reviewId,
     reviewRef: refBy.get(c.reviewId) ?? "?",
+    roundNumber: rounds.get(c.roundId) ?? 1,
     assetId: c.assetId,
     parentId: c.parentId,
+    markOf: c.markOf,
+    markIndex: c.markIndex,
     author: userMap.get(c.authorId) ?? unknownUser(c.authorId),
     body: c.body,
     timestampMs: c.timestampMs,

@@ -32,6 +32,8 @@ import { useMembers } from "../pages/Project";
 import { CommentCard, EmptyComments } from "./CommentsPanel";
 import { CreateTaskDialog } from "./CreateTaskDialog";
 import { MediaStage } from "./MediaStage";
+import type { Overlay } from "./MediaStage";
+import { NewRoundDialog, RoundCard, RoundTabs } from "./Rounds";
 import { COLORS, renderSnapshot, type Tool } from "./shapes";
 
 const TOOLS: { id: Tool; icon: React.ReactNode; label: string; key: string }[] = [
@@ -66,8 +68,16 @@ export function ReviewPage() {
   const [selectedId, setSelectedId] = useState<string | null>(params.get("comment"));
   const [tool, setTool] = useState<Tool>("none");
   const [color, setColor] = useState(COLORS[0]!);
-  const [draft, setDraft] = useState<Shape[]>([]);
+  const [draft, setDraftShapes] = useState<Shape[]>([]);
+  /** One optional note per draft mark (same order as `draft`). */
+  const [markNotes, setMarkNotes] = useState<string[]>([]);
   const [body, setBody] = useState("");
+  const [creatingRound, setCreatingRound] = useState(false);
+  const markInputs = useRef<(HTMLInputElement | null)[]>([]);
+  const setDraft = useCallback((shapes: Shape[]) => {
+    setDraftShapes(shapes);
+    setMarkNotes((notes) => shapes.map((_, i) => notes[i] ?? ""));
+  }, []);
   const [attachTime, setAttachTime] = useState(true);
   const [time, setTime] = useState(0);
   const [scope, setScope] = useState<"asset" | "all">("asset");
@@ -81,14 +91,42 @@ export function ReviewPage() {
 
   const comments = review?.comments ?? [];
   const selectedComment = comments.find((c) => c.id === selectedId) ?? null;
-  const asset = review?.assets.find((a) => a.id === assetId) ?? review?.assets[0] ?? null;
+  // Round shown: ?round=N, else the latest submitted round (or a later draft you are putting together).
+  const defaultRound = review?.rounds.filter((r) => r.submittedAt || r.createdBy.id === me.id).at(-1)?.number ?? 1;
+  const roundNumber = Number(params.get("round")) || defaultRound;
+  const round = review?.rounds.find((r) => r.number === roundNumber) ?? review?.rounds.at(-1);
+  const roundAssets = review?.assets.filter((a) => a.roundNumber === round?.number) ?? [];
+  const asset = roundAssets.find((a) => a.id === assetId) ?? roundAssets[0] ?? null;
+  const setRound = (n: number) => {
+    setAssetId(null);
+    setDraft([]);
+    setSelectedId(null);
+    setParams(
+      (p) => {
+        p.set("round", String(n));
+        p.delete("comment");
+        return p;
+      },
+      { replace: true },
+    );
+  };
 
   // Deep links (?comment=) open the comment's media.
   useEffect(() => {
     if (!review || assetId) return;
     const target = review.comments.find((c) => c.id === params.get("comment"));
-    setAssetId(target?.assetId ?? review.assets[0]?.id ?? null);
-  }, [review, assetId, params]);
+    // Deep links open the comment's round too.
+    if (target && !params.get("round") && target.roundNumber !== defaultRound) {
+      setParams(
+        (p) => {
+          p.set("round", String(target.roundNumber));
+          return p;
+        },
+        { replace: true },
+      );
+    }
+    if (target?.assetId) setAssetId(target.assetId);
+  }, [review, assetId, params, defaultRound, setParams]);
 
   // Seek to the selected comment once its video is ready.
   useEffect(() => {
@@ -131,16 +169,25 @@ export function ReviewPage() {
       const isVideo = asset?.kind === "video" && media instanceof HTMLVideoElement;
       if (isVideo && !media.paused) media.pause();
       const timestampMs = isVideo && (attachTime || draft.length) ? Math.round(media.currentTime * 1000) : null;
-      const created = await api.post<ReviewCommentInfo>(`/api/reviews/${review!.id}/comments`, {
+      const created = await api.post<ReviewCommentInfo & { marks: ReviewCommentInfo[] }>(`/api/reviews/${review!.id}/comments`, {
         body,
         assetId: asset?.id ?? null,
         timestampMs,
         annotation: draft.length ? { shapes: draft } : null,
+        marks: markNotes.map((note, index) => ({ index, body: note.trim() })).filter((m) => m.body && m.index < draft.length),
+        ...(asset ? {} : { round: round?.number }),
       });
-      // Attach the rendered frame + marks so agents see exactly what was meant.
+      // Attach rendered frames so agents see exactly what was meant: all marks for the overall
+      // comment, and just its own mark for each mark comment.
       if (media && (draft.length || timestampMs != null)) {
-        const blob = await renderSnapshot(media, draft).catch(() => null);
-        if (blob) await upload(`/api/comments/${created.id}/snapshot`, blob, "snapshot.jpg").catch(() => undefined);
+        const shots: [string, Shape[], number[]][] = [
+          [created.id, draft, draft.map((_, i) => i + 1)],
+          ...created.marks.map((m): [string, Shape[], number[]] => [m.id, [draft[m.markIndex! - 1]!], [m.markIndex!]]),
+        ];
+        for (const [id, shapes, labels] of shots) {
+          const blob = await renderSnapshot(media, shapes, labels).catch(() => null);
+          if (blob) await upload(`/api/comments/${id}/snapshot`, blob, "snapshot.jpg").catch(() => undefined);
+        }
       }
       return created;
     },
@@ -188,7 +235,9 @@ export function ReviewPage() {
     try {
       for (const f of Array.from(files)) {
         setUploading({ name: f.name, progress: 0 });
-        await upload(`/api/reviews/${review.id}/assets`, f, f.name, (p) => setUploading({ name: f.name, progress: p }));
+        await upload(`/api/reviews/${review.id}/assets?round=${round?.number ?? 1}`, f, f.name, (p) =>
+          setUploading({ name: f.name, progress: p }),
+        );
       }
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -224,7 +273,26 @@ export function ReviewPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [draft]);
 
-  const topLevel = useMemo(() => comments.filter((c) => !c.parentId), [comments]);
+  useEffect(() => {
+    if (draft.length) markInputs.current[draft.length - 1]?.focus();
+  }, [draft.length]);
+
+  // Overall comments of the round shown; mark comments are nested under them.
+  const topLevel = useMemo(
+    () => comments.filter((c) => !c.parentId && !c.markOf && c.roundNumber === round?.number),
+    [comments, round?.number],
+  );
+  const marksOf = useMemo(() => {
+    const m = new Map<string, ReviewCommentInfo[]>();
+    for (const c of comments) if (c.markOf) m.set(c.markOf, [...(m.get(c.markOf) ?? []), c].sort((a, b) => a.markIndex! - b.markIndex!));
+    return m;
+  }, [comments]);
+  // Everything the owner decides on (overall comments and mark notes) that is still open, per round.
+  const undecided = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const c of comments) if (!c.parentId && c.status === "open") m.set(c.roundNumber, (m.get(c.roundNumber) ?? 0) + 1);
+    return m;
+  }, [comments]);
   const repliesOf = useMemo(() => {
     const m = new Map<string, ReviewCommentInfo[]>();
     for (const c of comments) if (c.parentId) m.set(c.parentId, [...(m.get(c.parentId) ?? []), c]);
@@ -235,10 +303,12 @@ export function ReviewPage() {
   if (!review) return <div className="p-8"><ErrorBox error={error} /></div>;
 
   // "This media" also shows general (media-less) comments. Order: media order, then timestamp, then time posted.
-  const assetIndex = new Map(review.assets.map((a, i) => [a.id, i]));
+  const assetIndex = new Map(roundAssets.map((a, i) => [a.id, i]));
+  const matchesStatus = (c: ReviewCommentInfo) =>
+    statusFilter === "all" || c.status === statusFilter || (marksOf.get(c.id) ?? []).some((m) => m.status === statusFilter);
   const visible = topLevel
     .filter((c) => scope === "all" || !c.assetId || c.assetId === asset?.id)
-    .filter((c) => statusFilter === "all" || c.status === statusFilter)
+    .filter(matchesStatus)
     .sort(
       (a, b) =>
         (assetIndex.get(a.assetId ?? "") ?? 1e9) - (assetIndex.get(b.assetId ?? "") ?? 1e9) ||
@@ -250,14 +320,24 @@ export function ReviewPage() {
     .map((c) => ({ id: c.id, timestampMs: c.timestampMs!, status: c.status, selected: c.id === selectedId }));
 
   // What to draw over the media: the selected comment, or comments near the playhead.
-  let overlay: Shape[] | null = null;
-  if (selectedComment?.assetId === asset?.id && selectedComment?.annotation) overlay = selectedComment.annotation.shapes;
-  else if (!draft.length && asset?.kind === "video") {
+  let overlay: Overlay | null = null;
+  const selectedRoot = selectedComment?.markOf ? comments.find((c) => c.id === selectedComment.markOf) : selectedComment;
+  if (selectedRoot?.assetId === asset?.id && selectedRoot?.annotation) {
+    const shapes = selectedRoot.annotation.shapes;
+    overlay = {
+      shapes,
+      labels: shapes.map((_, i) => i + 1),
+      highlight: selectedComment?.markIndex != null ? selectedComment.markIndex - 1 : null,
+    };
+  } else if (!draft.length && asset?.kind === "video") {
     const near = topLevel.filter((c) => c.assetId === asset.id && c.timestampMs != null && Math.abs(c.timestampMs / 1000 - time) < 0.4);
-    overlay = near.flatMap((c) => c.annotation?.shapes ?? []);
+    overlay = { shapes: near.flatMap((c) => c.annotation?.shapes ?? []) };
   }
 
-  const checkedComments = topLevel.filter((c) => checked.has(c.id));
+  const checkedComments = comments.filter((c) => checked.has(c.id));
+  const canChangeRound = !!round && (round.createdBy.id === me.id || review.can.decide);
+  const canUpload = !!round && (round.submittedAt ? review.can.edit : canChangeRound);
+  const undecidedTotal = [...undecided.values()].reduce((a, b) => a + b, 0);
   const ownerOptions = (members ?? []).filter((m) => m.user.kind === "human" && m.role !== "viewer");
   const decideActions: { label: string; status: ReviewStatus; variant?: "primary" | "danger" }[] = [];
   if (review.can.decide && (review.status === "open" || review.status === "changes_requested")) {
@@ -347,6 +427,15 @@ export function ReviewPage() {
             </span>
           )}
         </div>
+        {review.can.decide && undecidedTotal > 0 && (
+          <button
+            className="mt-1.5 ml-8 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+            onClick={() => setStatusFilter("open")}
+          >
+            {undecidedTotal} comment{undecidedTotal > 1 ? "s" : ""} need{undecidedTotal > 1 ? "" : "s"} your decision: accept or reject each one
+          </button>
+        )}
+        <RoundTabs review={review} current={round?.number ?? 1} undecided={undecided} onSelect={setRound} onNew={() => setCreatingRound(true)} />
         {review.status === "draft" && (
           <div className="mt-2 ml-8 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
             Draft — only visible to the submitter, the owner and project owners until published.
@@ -359,8 +448,8 @@ export function ReviewPage() {
         {/* Assets */}
         <div className="flex w-44 shrink-0 flex-col border-r border-zinc-200 bg-white">
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-            {review.assets.map((a, i) => {
-              const count = topLevel.filter((c) => c.assetId === a.id && c.status === "open").length;
+            {roundAssets.map((a, i) => {
+              const count = comments.filter((c) => c.assetId === a.id && !c.parentId && c.status === "open").length;
               return (
                 <button
                   key={a.id}
@@ -395,7 +484,7 @@ export function ReviewPage() {
                     <span className="min-w-0 flex-1 truncate">{a.caption || a.filename}</span>
                     {count > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-amber-800">{count}</span>}
                   </div>
-                  {review.can.edit && (
+                  {canUpload && (
                     <span
                       role="button"
                       className="absolute top-1 right-1 hidden rounded bg-black/60 p-1 text-white group-hover:block hover:bg-red-600"
@@ -411,9 +500,9 @@ export function ReviewPage() {
                 </button>
               );
             })}
-            {!review.assets.length && <p className="p-2 text-xs text-zinc-400">No media in this review.</p>}
+            {!roundAssets.length && <p className="p-2 text-xs text-zinc-400">No media in this round yet.</p>}
           </div>
-          {review.can.edit && (
+          {canUpload && (
             <div className="border-t border-zinc-200 p-2">
               <input
                 ref={fileInput}
@@ -514,6 +603,18 @@ export function ReviewPage() {
         {/* Comments */}
         <div className="flex w-[400px] shrink-0 flex-col border-l border-zinc-200 bg-zinc-50">
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+            {round && (
+              <RoundCard
+                review={review}
+                round={round}
+                canChange={canChangeRound}
+                onChanged={(r) => {
+                  if (r) refresh(r);
+                  else refresh();
+                  if (r && !r.rounds.some((x) => x.number === round.number)) setRound(r.rounds.at(-1)?.number ?? 1);
+                }}
+              />
+            )}
             {(review.description || editing) && (
               <details open={!!editing || !comments.length} className="rounded-lg border border-zinc-200 bg-white p-3">
                 <summary className="cursor-pointer text-xs font-semibold text-zinc-600">Description</summary>
@@ -542,13 +643,13 @@ export function ReviewPage() {
                     onClick={() => setScope(s)}
                     className={cx("rounded px-2 py-1 whitespace-nowrap", scope === s ? "bg-zinc-100 font-medium text-zinc-900" : "text-zinc-500")}
                   >
-                    {s === "asset" ? "This media" : `All (${topLevel.length})`}
+                    {s === "asset" ? "This media" : `Round ${round?.number ?? 1} (${topLevel.length})`}
                   </button>
                 ))}
               </div>
-              <Select className="!h-7 w-28 text-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <Select className="!h-7 w-36 text-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                 <option value="all">Any status</option>
-                <option value="open">Open</option>
+                <option value="open">Needs decision</option>
                 <option value="accepted">Accepted</option>
                 <option value="rejected">Rejected</option>
                 <option value="resolved">Resolved</option>
@@ -566,26 +667,25 @@ export function ReviewPage() {
               <CommentCard
                 key={c.id}
                 comment={c}
-                replies={repliesOf.get(c.id) ?? []}
+                marks={marksOf.get(c.id) ?? []}
+                repliesOf={repliesOf}
                 review={review}
                 asset={review.assets.find((a) => a.id === c.assetId)}
                 showAsset={scope === "all"}
-                selected={c.id === selectedId}
-                checked={checked.has(c.id)}
+                selectedId={selectedId}
+                checkedIds={checked}
                 meId={me.id}
-                onSelect={() => selectComment(c)}
-                onCheck={(v) =>
+                onSelect={selectComment}
+                onCheck={(id, v) =>
                   setChecked((prev) => {
                     const next = new Set(prev);
-                    if (v) next.add(c.id);
-                    else next.delete(c.id);
+                    if (v) next.add(id);
+                    else next.delete(id);
                     return next;
                   })
                 }
-                onDecide={(status) => decide.mutate({ id: c.id, status })}
-                onReply={(text) =>
-                  api.post(`/api/reviews/${review.id}/comments`, { body: text, parentId: c.id }).then(() => refresh())
-                }
+                onDecide={(id, status) => decide.mutate({ id, status })}
+                onReply={(parentId, text) => api.post(`/api/reviews/${review.id}/comments`, { body: text, parentId }).then(() => refresh())}
                 onDelete={(id) => confirm("Delete this comment?") && deleteComment.mutate(id)}
               />
             ))}
@@ -611,16 +711,46 @@ export function ReviewPage() {
                     <span className="font-mono">{formatTimestamp(time * 1000)}</span>
                   </label>
                 )}
-                {draft.length > 0 && (
-                  <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-700">
-                    {draft.length} mark{draft.length > 1 ? "s" : ""}
-                  </span>
-                )}
               </div>
+              {draft.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-zinc-600">Notes on each mark (optional, decided separately)</div>
+                  {draft.map((shape, i) => (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <span
+                        className="flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ring-1 ring-black/20"
+                        style={{ background: shape.color }}
+                        title={shape.type}
+                      >
+                        {i + 1}
+                      </span>
+                      <Input
+                        ref={(el) => {
+                          markInputs.current[i] = el;
+                        }}
+                        className="!h-8 text-xs"
+                        value={markNotes[i] ?? ""}
+                        placeholder={`What's wrong at mark ${i + 1}?`}
+                        onChange={(e) => setMarkNotes((n) => n.map((v, j) => (j === i ? e.target.value : v)))}
+                      />
+                      <button
+                        className="text-zinc-400 hover:text-red-600"
+                        title={`Remove mark ${i + 1}`}
+                        onClick={() => {
+                          setDraftShapes((d) => d.filter((_, j) => j !== i));
+                          setMarkNotes((n) => n.filter((_, j) => j !== i));
+                        }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <Textarea
                 rows={3}
                 value={body}
-                placeholder={draft.length ? "Describe what you marked…" : "Comment on this frame… (⌘↵ to send)"}
+                placeholder={draft.length ? "Overall comment on this frame…" : "Comment on this frame… (⌘↵ to send)"}
                 onFocus={() => {
                   const v = mediaRef.current;
                   if (v instanceof HTMLVideoElement && !v.paused) v.pause();
@@ -641,6 +771,18 @@ export function ReviewPage() {
         </div>
       </div>
 
+      {creatingRound && (
+        <NewRoundDialog
+          review={review}
+          onClose={() => setCreatingRound(false)}
+          onDone={(detail, n) => {
+            setCreatingRound(false);
+            refresh(detail);
+            qc.invalidateQueries({ queryKey: ["tasks", key] });
+            setRound(n);
+          }}
+        />
+      )}
       {creatingTask && (
         <CreateTaskDialog
           review={review}

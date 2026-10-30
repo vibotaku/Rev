@@ -12,7 +12,8 @@ function composeDescription(review: ReviewDetail, comments: ReviewCommentInfo[])
     const where = [c.assetId ? assetName.get(c.assetId) : null, c.timestampMs != null ? `@ ${formatTimestamp(c.timestampMs)}` : null]
       .filter(Boolean)
       .join(" ");
-    lines.push(`- ${where ? `*${where}*: ` : ""}${c.body.replace(/\n+/g, " ")}`);
+    const mark = c.markIndex != null ? `mark #${c.markIndex}: ` : "";
+    lines.push(`- ${where ? `*${where}*: ` : ""}${mark}${c.body.replace(/\n+/g, " ")}`);
   }
   if (comments.length) lines.push("", "Annotated frames are attached to the task via its source comments.");
   return lines.join("\n");

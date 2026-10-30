@@ -214,12 +214,34 @@ export const assetUpdateBody = z.object({
 });
 
 export const reviewCommentCreateBody = z.object({
+  /** The overall comment on the frame/screen. */
   body: z.string().trim().min(1).max(20_000),
   assetId: z.uuid().nullable().default(null),
   parentId: z.uuid().nullable().default(null),
   timestampMs: z.number().int().min(0).nullable().default(null),
   annotation: annotationSchema.nullable().default(null),
+  /**
+   * Notes on individual marks: `index` is the 0-based position of the shape in
+   * `annotation.shapes`. Each becomes its own comment the owner decides on.
+   */
+  marks: z
+    .array(z.object({ index: z.number().int().min(0), body: z.string().trim().min(1).max(5_000) }))
+    .max(50)
+    .default([]),
+  /** Round to comment on; defaults to the media's round, else the latest round. */
+  round: z.number().int().min(1).optional(),
 });
+
+export const reviewRoundCreateBody = z.object({
+  /** What changed since the previous round (markdown). */
+  notes: markdown.default(""),
+  /**
+   * Tasks this round addresses ("WEB-12"). When omitted: the open tasks from
+   * this review that are assigned to you (agents) or all of them (humans).
+   */
+  taskRefs: z.array(z.string().trim().min(1).max(40)).max(100).optional(),
+});
+export const reviewRoundUpdateBody = z.object({ notes: markdown });
 export const reviewCommentUpdateBody = z.object({
   body: z.string().trim().min(1).max(20_000).optional(),
   status: z.enum(COMMENT_STATUSES).optional(),
@@ -498,7 +520,8 @@ export interface TaskDetail extends TaskInfo {
   /** Review comments this task was created from, with their annotations. */
   sourceComments: ReviewCommentInfo[];
   /** Reviews submitted to deliver this task. */
-  deliveries: { id: string; ref: string; title: string; status: ReviewStatus; createdAt: string }[];
+  /** Reviews (or later rounds of the source review) submitted to deliver this task. */
+  deliveries: { id: string; ref: string; title: string; status: ReviewStatus; createdAt: string; round: number | null }[];
   activity: TaskActivityInfo[];
   can: {
     edit: boolean;
@@ -512,6 +535,8 @@ export interface TaskDetail extends TaskInfo {
 
 export interface ReviewAssetInfo {
   id: string;
+  roundId: string;
+  roundNumber: number;
   kind: AssetKind;
   status: AssetStatus;
   filename: string;
@@ -532,8 +557,13 @@ export interface ReviewCommentInfo {
   id: string;
   reviewId: string;
   reviewRef: string;
+  roundNumber: number;
   assetId: string | null;
   parentId: string | null;
+  /** Set for a note on a single mark: the overall comment it belongs to. */
+  markOf: string | null;
+  /** 1-based mark number within the overall comment (matches the number drawn on the frame). */
+  markIndex: number | null;
   author: UserSummary;
   body: string;
   timestampMs: number | null;
@@ -561,13 +591,28 @@ export interface ReviewInfo {
   assetCount: number;
   commentCount: number;
   openCommentCount: number;
+  /** Number of the latest submitted round (1 for a single-round review). */
+  currentRound: number;
   thumbnailUrl: string | null;
   createdAt: string;
   updatedAt: string;
   publishedAt: string | null;
 }
 
+export interface ReviewRoundInfo {
+  id: string;
+  number: number;
+  notes: string;
+  createdBy: UserSummary;
+  createdAt: string;
+  /** Null while the round is being put together. */
+  submittedAt: string | null;
+  addressedTasks: { id: string; ref: string; title: string; status: TaskStatus; closureReview: ClosureReview | null }[];
+  assetCount: number;
+}
+
 export interface ReviewDetail extends ReviewInfo {
+  rounds: ReviewRoundInfo[];
   assets: ReviewAssetInfo[];
   comments: ReviewCommentInfo[];
   tasks: {
@@ -584,6 +629,8 @@ export interface ReviewDetail extends ReviewInfo {
     /** Approve / request changes, accept or reject comments, create tasks from them. */
     decide: boolean;
     publish: boolean;
+    /** Start the next round (the review's author/owner, or an agent working on a task from it). */
+    addRound: boolean;
     assignableUserIds: string[];
   };
 }

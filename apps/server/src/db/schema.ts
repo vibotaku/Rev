@@ -256,6 +256,45 @@ export const reviews = pgTable(
   ],
 );
 
+/**
+ * A review happens in rounds: round 1 is the original kit; when the issues are
+ * addressed, the agent (or a human) submits round N+1 with new media.
+ * Comments belong to the round they were made on.
+ */
+export const reviewRounds = pgTable(
+  "review_rounds",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    reviewId: uuid("review_id")
+      .notNull()
+      .references(() => reviews.id, { onDelete: "cascade" }),
+    number: integer("number").notNull(),
+    /** What changed in this round (markdown). */
+    notes: text("notes").notNull().default(""),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    /** Null while the round is still being put together (only its author and the deciders see it). */
+    submittedAt: ts("submitted_at"),
+  },
+  (t) => [uniqueIndex("review_rounds_review_number_idx").on(t.reviewId, t.number)],
+);
+
+/** Tasks a round says it addresses. */
+export const reviewRoundTasks = pgTable(
+  "review_round_tasks",
+  {
+    roundId: uuid("round_id")
+      .notNull()
+      .references(() => reviewRounds.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id")
+      .notNull()
+      .references((): AnyPgColumn => tasks.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.roundId, t.taskId] }), index("review_round_tasks_task_idx").on(t.taskId)],
+);
+
 export const reviewAssets = pgTable(
   "review_assets",
   {
@@ -263,6 +302,9 @@ export const reviewAssets = pgTable(
     reviewId: uuid("review_id")
       .notNull()
       .references(() => reviews.id, { onDelete: "cascade" }),
+    roundId: uuid("round_id")
+      .notNull()
+      .references(() => reviewRounds.id, { onDelete: "cascade" }),
     kind: text("kind").$type<AssetKind>().notNull(),
     status: text("status").$type<AssetStatus>().notNull().default("processing"),
     filename: text("filename").notNull(),
@@ -291,8 +333,16 @@ export const reviewComments = pgTable(
     reviewId: uuid("review_id")
       .notNull()
       .references(() => reviews.id, { onDelete: "cascade" }),
+    roundId: uuid("round_id")
+      .notNull()
+      .references(() => reviewRounds.id, { onDelete: "cascade" }),
     assetId: uuid("asset_id").references(() => reviewAssets.id, { onDelete: "set null" }),
+    /** Replies: the comment this one answers. */
     parentId: uuid("parent_id").references((): AnyPgColumn => reviewComments.id, { onDelete: "cascade" }),
+    /** Mark comments: the overall comment whose mark (pin, box, …) this note is about. Decided separately. */
+    markOf: uuid("mark_of").references((): AnyPgColumn => reviewComments.id, { onDelete: "cascade" }),
+    /** 1-based number of the mark within its overall comment's annotation. */
+    markIndex: integer("mark_index"),
     authorId: uuid("author_id")
       .notNull()
       .references(() => users.id),
@@ -308,5 +358,9 @@ export const reviewComments = pgTable(
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [index("review_comments_review_idx").on(t.reviewId, t.createdAt), index("review_comments_task_idx").on(t.taskId)],
+  (t) => [
+    index("review_comments_review_idx").on(t.reviewId, t.createdAt),
+    index("review_comments_task_idx").on(t.taskId),
+    index("review_comments_mark_of_idx").on(t.markOf),
+  ],
 );

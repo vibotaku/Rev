@@ -19,30 +19,59 @@ import {
 } from "@rev/shared";
 import type { AppContext } from "../context";
 import type { Tx } from "../db";
-import { projectMembers, reviewAssets, reviewComments, reviews, taskActivity, tasks, users } from "../db/schema";
+import { projectMembers, projects, reviewAssets, reviewComments, reviewRounds, reviewRoundTasks, reviews, taskActivity, tasks, users } from "../db/schema";
 import { assertAssignable, assertCan, assignableUserIds, isWriter, loadProject, projectPerms, reviewPerms } from "../lib/access";
 import { requireActor, type Actor } from "../lib/auth";
 import { badRequest, conflict, forbidden, HttpError, notFound, parse } from "../lib/errors";
 import { resolveReview, resolveTask } from "../lib/refs";
-import { serializeAsset, serializeComments, serializeReviews, reviewAssetsOf, loadUsers } from "../lib/serialize";
+import { canAddRound, mayChangeRound, roundsOf, roundVisible } from "../lib/rounds";
+import { serializeAsset, serializeComments, serializeReviews, reviewAssetsOf, loadUsers, roundNumbers } from "../lib/serialize";
 import { closureReviewOf, insertTask, nextNumber } from "../lib/tasks";
 import { taskDetail } from "./tasks";
 
 const SNAPSHOT_MAX_BYTES = 15 * 1024 * 1024;
 
-async function reviewDetail(ctx: AppContext, actor: Actor, ref: string): Promise<ReviewDetail> {
+export async function reviewDetail(ctx: AppContext, actor: Actor, ref: string): Promise<ReviewDetail> {
   const { review, project, role, perms } = await resolveReview(ctx.db, actor, ref);
-  const [[info], assets, commentRows, taskRows, assignable] = await Promise.all([
+  const [[info], allAssets, allComments, taskRows, assignable, allRounds, addRound] = await Promise.all([
     serializeReviews(ctx.db, [review]),
     reviewAssetsOf(ctx.db, review.id),
     ctx.db.select().from(reviewComments).where(eq(reviewComments.reviewId, review.id)).orderBy(asc(reviewComments.createdAt)),
     ctx.db.select().from(tasks).where(eq(tasks.sourceReviewId, review.id)).orderBy(asc(tasks.number)),
     perms.decide ? assignableUserIds(ctx.db, project.id, actor, role) : Promise.resolve([]),
+    roundsOf(ctx.db, review.id),
+    canAddRound(ctx.db, actor, review, perms),
   ]);
-  const assignees = await loadUsers(ctx.db, taskRows.map((t) => t.assigneeId));
+  // Draft rounds are hidden from people who are not putting them together.
+  const rounds = allRounds.filter((r) => roundVisible(r, actor, perms));
+  const visible = new Set(rounds.map((r) => r.id));
+  const assets = allAssets.filter((a) => visible.has(a.roundId));
+  const commentRows = allComments.filter((c) => visible.has(c.roundId));
+  const roundNumber = new Map(rounds.map((r) => [r.id, r.number]));
+  const addressed = rounds.length
+    ? await ctx.db
+        .select({ roundId: reviewRoundTasks.roundId, task: tasks, key: projects.key })
+        .from(reviewRoundTasks)
+        .innerJoin(tasks, eq(tasks.id, reviewRoundTasks.taskId))
+        .innerJoin(projects, eq(projects.id, tasks.projectId))
+        .where(inArray(reviewRoundTasks.roundId, rounds.map((r) => r.id)))
+    : [];
+  const people = await loadUsers(ctx.db, [...taskRows.map((t) => t.assigneeId), ...rounds.map((r) => r.createdBy)]);
   return {
     ...info!,
-    assets: assets.map(serializeAsset),
+    rounds: rounds.map((r) => ({
+      id: r.id,
+      number: r.number,
+      notes: r.notes,
+      createdBy: people.get(r.createdBy)!,
+      createdAt: r.createdAt.toISOString(),
+      submittedAt: r.submittedAt?.toISOString() ?? null,
+      addressedTasks: addressed
+        .filter((a) => a.roundId === r.id)
+        .map(({ task: t, key }) => ({ id: t.id, ref: taskRef(key, t.number), title: t.title, status: t.status, closureReview: closureReviewOf(t) })),
+      assetCount: assets.filter((a) => a.roundId === r.id).length,
+    })),
+    assets: assets.map((a) => serializeAsset(a, roundNumber.get(a.roundId) ?? 1)),
     comments: await serializeComments(ctx.db, commentRows),
     tasks: taskRows.map((t) => ({
       id: t.id,
@@ -50,9 +79,9 @@ async function reviewDetail(ctx: AppContext, actor: Actor, ref: string): Promise
       title: t.title,
       status: t.status,
       closureReview: closureReviewOf(t),
-      assignee: t.assigneeId ? (assignees.get(t.assigneeId) ?? null) : null,
+      assignee: t.assigneeId ? (people.get(t.assigneeId) ?? null) : null,
     })),
-    can: { ...perms, assignableUserIds: assignable },
+    can: { ...perms, addRound, assignableUserIds: assignable },
   };
 }
 
@@ -100,7 +129,8 @@ function composeTaskDescription(
     const where = [c.assetId ? assetNames.get(c.assetId) : null, c.timestampMs != null ? `@ ${formatTimestamp(c.timestampMs)}` : null]
       .filter(Boolean)
       .join(" ");
-    lines.push(`- ${where ? `*${where}*: ` : ""}${c.body.replace(/\n+/g, " ")}`);
+    const mark = c.markIndex != null ? `mark #${c.markIndex}: ` : "";
+    lines.push(`- ${where ? `*${where}*: ` : ""}${mark}${c.body.replace(/\n+/g, " ")}`);
   }
   return lines.join("\n");
 }
@@ -157,6 +187,7 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
           publishedAt: body.publish ? now : null,
         })
         .returning();
+      await tx.insert(reviewRounds).values({ reviewId: r!.id, number: 1, createdBy: actor.id, submittedAt: body.publish ? now : null });
       if (body.publish) await onPublished(tx, actor, r!);
       return r!;
     });
@@ -192,7 +223,13 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
         .set({ ...body, updatedAt: new Date(), ...(publishing ? { publishedAt: new Date() } : {}) })
         .where(eq(reviews.id, review.id))
         .returning();
-      if (publishing) await onPublished(tx, actor, updated!);
+      if (publishing) {
+        await tx
+          .update(reviewRounds)
+          .set({ submittedAt: new Date() })
+          .where(and(eq(reviewRounds.reviewId, review.id), eq(reviewRounds.number, 1)));
+        await onPublished(tx, actor, updated!);
+      }
     });
     return reviewDetail(ctx, actor, review.id);
   });
@@ -210,10 +247,14 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
 
   // ---- Assets --------------------------------------------------------------
 
-  app.post<{ Params: { ref: string }; Querystring: { caption?: string } }>("/api/reviews/:ref/assets", async (req) => {
+  /** Upload into a round (`?round=N`, default: the latest). Draft rounds take uploads from their author. */
+  app.post<{ Params: { ref: string }; Querystring: { caption?: string; round?: string } }>("/api/reviews/:ref/assets", async (req) => {
     const actor = requireActor(req);
     const { review, perms } = await resolveReview(ctx.db, actor, req.params.ref);
-    assertCan(perms.edit, "You cannot add media to this review");
+    const rounds = await roundsOf(ctx.db, review.id);
+    const round = req.query.round ? rounds.find((r) => r.number === Number(req.query.round)) : rounds.at(-1);
+    if (!round || !roundVisible(round, actor, perms)) throw notFound("Round");
+    assertCan(round.submittedAt ? perms.edit : mayChangeRound(round, actor, perms), "You cannot add media to this round");
     if (!req.isMultipart()) throw badRequest("Expected a multipart upload with a `file` field");
     const file = await req.file({ limits: { fileSize: ctx.config.maxUploadBytes, files: 1 } });
     if (!file) throw badRequest("No file uploaded");
@@ -238,12 +279,13 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
     const [{ pos }] = (await ctx.db
       .select({ pos: max(reviewAssets.position) })
       .from(reviewAssets)
-      .where(eq(reviewAssets.reviewId, review.id))) as [{ pos: number | null }];
+      .where(eq(reviewAssets.roundId, round.id))) as [{ pos: number | null }];
     const [asset] = await ctx.db
       .insert(reviewAssets)
       .values({
         id,
         reviewId: review.id,
+        roundId: round.id,
         kind,
         filename: path.basename(file.filename).slice(0, 255) || `upload${safeExt}`,
         mime,
@@ -256,13 +298,24 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
       .returning();
     await ctx.db.update(reviews).set({ updatedAt: new Date() }).where(eq(reviews.id, review.id));
     ctx.processor.enqueue(asset!.id);
-    return serializeAsset(asset!);
+    return serializeAsset(asset!, round.number);
   });
+
+  /** Media in a submitted round can be changed by the review's editors; in a draft round, by the round's author or a decider. */
+  async function assertAssetEditable(actor: Actor, perms: ReturnType<typeof reviewPerms>, reviewId: string, assetId: string) {
+    const [row] = await ctx.db
+      .select({ round: reviewRounds })
+      .from(reviewAssets)
+      .innerJoin(reviewRounds, eq(reviewRounds.id, reviewAssets.roundId))
+      .where(and(eq(reviewAssets.id, assetId), eq(reviewAssets.reviewId, reviewId)));
+    if (!row) throw notFound("Asset");
+    assertCan(row.round.submittedAt ? perms.edit : mayChangeRound(row.round, actor, perms), "You cannot edit this media");
+  }
 
   app.patch<{ Params: { ref: string; assetId: string } }>("/api/reviews/:ref/assets/:assetId", async (req) => {
     const actor = requireActor(req);
     const { review, perms } = await resolveReview(ctx.db, actor, req.params.ref);
-    assertCan(perms.edit, "You cannot edit this review");
+    await assertAssetEditable(actor, perms, review.id, req.params.assetId);
     const body = parse(assetUpdateBody, req.body);
     const [asset] = await ctx.db
       .update(reviewAssets)
@@ -270,13 +323,13 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
       .where(and(eq(reviewAssets.id, req.params.assetId), eq(reviewAssets.reviewId, review.id)))
       .returning();
     if (!asset) throw notFound("Asset");
-    return serializeAsset(asset);
+    return serializeAsset(asset, (await roundNumbers(ctx.db, [asset.roundId])).get(asset.roundId) ?? 1);
   });
 
   app.delete<{ Params: { ref: string; assetId: string } }>("/api/reviews/:ref/assets/:assetId", async (req) => {
     const actor = requireActor(req);
     const { review, perms } = await resolveReview(ctx.db, actor, req.params.ref);
-    assertCan(perms.edit, "You cannot edit this review");
+    await assertAssetEditable(actor, perms, review.id, req.params.assetId);
     const [asset] = await ctx.db
       .delete(reviewAssets)
       .where(and(eq(reviewAssets.id, req.params.assetId), eq(reviewAssets.reviewId, review.id)))
@@ -293,42 +346,85 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
     const { review, perms } = await resolveReview(ctx.db, actor, req.params.ref);
     assertCan(perms.comment, "You cannot comment on this review");
     const body = parse(reviewCommentCreateBody, req.body);
+    const rounds = (await roundsOf(ctx.db, review.id)).filter((r) => roundVisible(r, actor, perms));
 
     let assetId = body.assetId;
+    let roundId: string;
     if (body.parentId) {
       const [parent] = await ctx.db
         .select()
         .from(reviewComments)
         .where(and(eq(reviewComments.id, body.parentId), eq(reviewComments.reviewId, review.id)));
-      if (!parent) throw badRequest("Parent comment not found in this review");
+      if (!parent || !rounds.some((r) => r.id === parent.roundId)) throw badRequest("Parent comment not found in this review");
       if (parent.parentId) throw badRequest("Replies cannot be nested");
-      if (body.annotation || body.timestampMs != null) throw badRequest("Replies cannot carry annotations");
+      if (body.annotation || body.timestampMs != null || body.marks.length) throw badRequest("Replies cannot carry annotations");
       assetId = parent.assetId;
+      roundId = parent.roundId;
     } else if (assetId) {
       const [asset] = await ctx.db
         .select()
         .from(reviewAssets)
         .where(and(eq(reviewAssets.id, assetId), eq(reviewAssets.reviewId, review.id)));
-      if (!asset) throw badRequest("Asset not found in this review");
+      if (!asset || !rounds.some((r) => r.id === asset.roundId)) throw badRequest("Asset not found in this review");
       if (body.timestampMs != null && asset.kind !== "video") throw badRequest("Timestamps only apply to videos");
-    } else if (body.annotation || body.timestampMs != null) {
-      throw badRequest("Annotations and timestamps need an assetId");
+      roundId = asset.roundId;
+    } else {
+      if (body.annotation || body.timestampMs != null || body.marks.length) throw badRequest("Annotations and timestamps need an assetId");
+      // General comments go on the requested round, else the latest one the commenter can see.
+      const round = body.round ? rounds.find((r) => r.number === body.round) : rounds.findLast((r) => r.submittedAt) ?? rounds.at(-1);
+      if (!round) throw badRequest(`Round ${body.round} not found`);
+      roundId = round.id;
     }
 
-    const [comment] = await ctx.db
-      .insert(reviewComments)
-      .values({
-        reviewId: review.id,
-        assetId,
-        parentId: body.parentId,
-        authorId: actor.id,
-        body: body.body,
-        timestampMs: body.parentId ? null : body.timestampMs,
-        annotation: body.parentId ? null : body.annotation,
-      })
-      .returning();
-    await ctx.db.update(reviews).set({ updatedAt: new Date() }).where(eq(reviews.id, review.id));
-    return (await serializeComments(ctx.db, [comment!]))[0];
+    // Each mark (pin, box, …) may carry its own note, decided on separately from the overall comment.
+    const shapes = body.annotation?.shapes ?? [];
+    const seen = new Set<number>();
+    for (const m of body.marks) {
+      if (m.index >= shapes.length) throw badRequest(`marks: there is no mark #${m.index + 1} in the annotation`);
+      if (seen.has(m.index)) throw badRequest(`marks: mark #${m.index + 1} has more than one note`);
+      seen.add(m.index);
+    }
+
+    const created = await ctx.db.transaction(async (tx) => {
+      const [comment] = await tx
+        .insert(reviewComments)
+        .values({
+          reviewId: review.id,
+          roundId,
+          assetId,
+          parentId: body.parentId,
+          authorId: actor.id,
+          body: body.body,
+          timestampMs: body.parentId ? null : body.timestampMs,
+          annotation: body.parentId ? null : body.annotation,
+        })
+        .returning();
+      const marks = body.marks.length
+        ? await tx
+            .insert(reviewComments)
+            .values(
+              [...body.marks]
+                .sort((a, b) => a.index - b.index)
+                .map((m) => ({
+                  reviewId: review.id,
+                  roundId,
+                  assetId,
+                  authorId: actor.id,
+                  body: m.body,
+                  timestampMs: body.timestampMs,
+                  annotation: { shapes: [shapes[m.index]!] },
+                  markOf: comment!.id,
+                  markIndex: m.index + 1,
+                })),
+            )
+            .returning()
+        : [];
+      await tx.update(reviews).set({ updatedAt: new Date() }).where(eq(reviews.id, review.id));
+      return [comment!, ...marks];
+    });
+    // The overall comment comes first, followed by its mark comments.
+    const [comment, ...marks] = await serializeComments(ctx.db, created);
+    return { ...comment!, marks };
   });
 
   async function loadComment(actor: Actor, id: string) {
@@ -390,8 +486,13 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
     const mayDelete = comment.authorId === actor.id || (actor.kind === "human" && role === "owner");
     assertCan(mayDelete, "You cannot delete this comment");
     if (comment.taskId) throw conflict("This comment has a task; it cannot be deleted");
+    // Deleting an overall comment deletes the notes on its marks too.
+    const marks = await ctx.db.select().from(reviewComments).where(eq(reviewComments.markOf, comment.id));
+    if (marks.some((m) => m.taskId)) throw conflict("A mark on this comment has a task; it cannot be deleted");
     await ctx.db.delete(reviewComments).where(eq(reviewComments.id, comment.id));
-    if (comment.snapshotKey) await ctx.storage.removePrefix(comment.snapshotKey);
+    for (const key of [comment.snapshotKey, ...marks.map((m) => m.snapshotKey)]) {
+      if (key) await ctx.storage.removePrefix(key);
+    }
     return { ok: true };
   });
 

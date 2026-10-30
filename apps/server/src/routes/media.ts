@@ -5,6 +5,7 @@ import { reviewAssets, reviewComments } from "../db/schema";
 import { requireActor } from "../lib/auth";
 import { notFound } from "../lib/errors";
 import { resolveReview } from "../lib/refs";
+import { assertRoundVisible } from "../lib/rounds";
 
 /** Media is served only to people who can see the review; Range requests are supported for video seeking. */
 export default async function mediaRoutes(app: FastifyInstance, ctx: AppContext) {
@@ -22,7 +23,8 @@ export default async function mediaRoutes(app: FastifyInstance, ctx: AppContext)
     const actor = requireActor(req);
     const [asset] = await ctx.db.select().from(reviewAssets).where(eq(reviewAssets.id, id));
     if (!asset) throw notFound("Asset");
-    await resolveReview(ctx.db, actor, asset.reviewId);
+    const { perms } = await resolveReview(ctx.db, actor, asset.reviewId);
+    await assertRoundVisible(ctx.db, asset.roundId, actor, perms);
     return asset;
   }
 
@@ -42,7 +44,8 @@ export default async function mediaRoutes(app: FastifyInstance, ctx: AppContext)
     const actor = requireActor(req);
     const [comment] = await ctx.db.select().from(reviewComments).where(eq(reviewComments.id, req.params.id));
     if (!comment?.snapshotKey) throw notFound("Snapshot");
-    await resolveReview(ctx.db, actor, comment.reviewId);
+    const { perms } = await resolveReview(ctx.db, actor, comment.reviewId);
+    await assertRoundVisible(ctx.db, comment.roundId, actor, perms);
     return send(reply, comment.snapshotKey);
   });
 }

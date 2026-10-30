@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, type SQL } from "drizzle-orm";
 import {
   reviewRef,
   TASK_STATUSES,
@@ -11,7 +11,7 @@ import {
   type TaskStatus,
 } from "@rev/shared";
 import type { AppContext } from "../context";
-import { projectMembers, projects, reviewComments, reviews, taskActivity, tasks } from "../db/schema";
+import { projectMembers, projects, reviewComments, reviewRoundTasks, reviewRounds, reviews, taskActivity, tasks } from "../db/schema";
 import { assertAssignable, assertCan, assignableUserIds, loadProject, projectPerms, taskPerms } from "../lib/access";
 import { requireActor, type Actor } from "../lib/auth";
 import { badRequest, conflict, forbidden, parse } from "../lib/errors";
@@ -44,6 +44,14 @@ export async function taskDetail(ctx: AppContext, actor: Actor, ref: string): Pr
     ctx.db.select().from(taskActivity).where(eq(taskActivity.taskId, task.id)).orderBy(asc(taskActivity.createdAt)),
     assignableUserIds(ctx.db, project.id, actor, role),
   ]);
+  // Later rounds of a review that say they address this task.
+  const roundDeliveries = await ctx.db
+    .select({ review: reviews, round: reviewRounds })
+    .from(reviewRoundTasks)
+    .innerJoin(reviewRounds, eq(reviewRounds.id, reviewRoundTasks.roundId))
+    .innerJoin(reviews, eq(reviews.id, reviewRounds.reviewId))
+    .where(and(eq(reviewRoundTasks.taskId, task.id), isNotNull(reviewRounds.submittedAt)))
+    .orderBy(desc(reviewRounds.submittedAt));
   const actors = await loadUsers(ctx.db, activityRows.map((a) => a.actorId));
   const activity: TaskActivityInfo[] = activityRows.map((a) => ({
     id: a.id,
@@ -57,13 +65,24 @@ export async function taskDetail(ctx: AppContext, actor: Actor, ref: string): Pr
   return {
     ...info!,
     sourceComments: await serializeComments(ctx.db, commentRows),
-    deliveries: deliveryRows.map((r) => ({
-      id: r.id,
-      ref: reviewRef(project.key, r.number),
-      title: r.title,
-      status: r.status,
-      createdAt: r.createdAt.toISOString(),
-    })),
+    deliveries: [
+      ...roundDeliveries.map(({ review: r, round }) => ({
+        id: r.id,
+        ref: reviewRef(project.key, r.number),
+        title: r.title,
+        status: r.status,
+        createdAt: round.submittedAt!.toISOString(),
+        round: round.number,
+      })),
+      ...deliveryRows.map((r) => ({
+        id: r.id,
+        ref: reviewRef(project.key, r.number),
+        title: r.title,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+        round: null,
+      })),
+    ],
     activity,
     can: { ...perms, assignableUserIds: perms.edit ? assignable : [] },
   };

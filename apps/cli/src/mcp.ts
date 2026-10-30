@@ -2,10 +2,10 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { TASK_STATUSES } from "@rev/shared";
+import { TASK_STATUS_LABELS, TASK_STATUSES } from "@rev/shared";
 import type { RevApi } from "./api";
 import { formatReview, formatTask, formatTaskLine } from "./format";
-import { assetNamesFor, createReviewKit, fetchSnapshots } from "./kit";
+import { assetNamesFor, createReviewKit, fetchSnapshots, submitReviewRound } from "./kit";
 import { VERSION } from "./version";
 
 export const INSTRUCTIONS = `Rev is the team's task and review tracker. You act as an agent account linked to a human owner.
@@ -13,12 +13,16 @@ export const INSTRUCTIONS = `Rev is the team's task and review tracker. You act 
 Workflow:
 1. Pull work: call list_my_tasks, then get_task for details. Tasks created from review feedback include the
    reviewers' comments, video timestamps, annotation descriptions and annotated snapshot images; address every one.
+   A comment can carry notes on individual marks ("mark #2 of comment …"): each mark is its own piece of feedback.
 2. Call update_task_status with "in_progress" when you start.
-3. When done, submit evidence with create_review: screenshots (png/jpg/webp/gif) and screen recordings
-   (mp4/webm/mov/mkv) given as local file paths, plus a description of what changed and how to verify it.
-   Pass task_ref so the review is linked to the task; publishing it moves the task to "in_review".
-4. Humans annotate and comment on the review. Use get_review to read feedback and reply_to_review_comment to answer
-   questions. Accepted feedback comes back to you as new tasks.
+3. When done, deliver evidence: screenshots (png/jpg/webp/gif) and screen recordings (mp4/webm/mov/mkv) given as
+   local file paths, plus notes on what changed and how to verify it.
+   - Task came from a review ("From review: WEB-R3" in get_task): submit the fix as the NEXT ROUND of that same
+     review with submit_review_round. Do not open a new review for it. The round moves the task to "in_review".
+   - New work with no source review: create_review, passing task_ref to link it to the task.
+4. Humans annotate and comment on each round. The review owner accepts or rejects every comment and every mark note
+   separately; only accepted ones become tasks for you. Use get_review to read feedback and reply_to_review_comment to
+   answer questions (you can reply to a mark note too).
 
 Rules: you cannot approve reviews, accept or reject comments, create tasks or assign work; those decisions belong to
 the humans. You may close your own tasks ("done"/"cancelled") when nothing needs a human to look at it; such closures are
@@ -155,7 +159,7 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
     "create_review",
     {
       description:
-        "Submit a review kit: upload screenshots and screen recordings from local file paths so humans can annotate and comment. Link it to the task you worked on with task_ref.",
+        "Start a NEW review: upload screenshots and screen recordings from local file paths so humans can annotate and comment. Link it to the task you worked on with task_ref. If the task came from an existing review, use submit_review_round on that review instead.",
       inputSchema: {
         project: z.string().describe('Project key, e.g. "WEB"'),
         title: z.string().min(1),
@@ -186,9 +190,43 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
   );
 
   server.registerTool(
+    "submit_review_round",
+    {
+      description:
+        "Submit the next round of an existing review after addressing its feedback: new screenshots/recordings plus notes on what changed. Reopens the review for its owner and moves the addressed tasks to in_review. Use this (not create_review) when a task came from a review.",
+      inputSchema: {
+        review_ref: z.string().describe('Review to continue, e.g. "WEB-R3" (the task\'s source review)'),
+        notes: z.string().default("").describe("Markdown: what changed since the previous round and how to verify it"),
+        files: z.array(z.string()).min(1).describe("Absolute paths to images (png/jpg/webp/gif) or videos (mp4/webm/mov/mkv)"),
+        captions: z.array(z.string()).optional().describe("Optional captions aligned with files"),
+        task_refs: z
+          .array(z.string())
+          .optional()
+          .describe("Tasks this round addresses; default: your open tasks that came from this review"),
+      },
+    },
+    (args) =>
+      guard(async () => {
+        const api = await getApi();
+        const { review, round } = await submitReviewRound(api, args.review_ref, {
+          notes: args.notes,
+          files: args.files.map((f) => path.resolve(f)),
+          captions: args.captions,
+          taskRefs: args.task_refs,
+        });
+        const addressed = round.addressedTasks.map((t) => `${t.ref} (${TASK_STATUS_LABELS[t.status]})`).join(", ") || "no tasks";
+        return text(
+          `Submitted round ${round.number} of ${review.ref} with ${round.assetCount} asset(s). Addresses ${addressed}.\n` +
+            `URL: ${api.webUrl("reviews", review.projectKey, review.number)}\nOwner: ${review.owner.name}`,
+        );
+      }),
+  );
+
+  server.registerTool(
     "get_review",
     {
-      description: "Read a review: assets, comment threads with status, timestamps and annotations.",
+      description:
+        "Read a review round by round: notes, assets, comments with their status (open/accepted/rejected/resolved), mark notes (#n), replies, timestamps and annotations.",
       inputSchema: {
         ref: z.string().describe('Review reference such as "WEB-R3"'),
         include_snapshots: z.boolean().default(false).describe("Attach annotated snapshot images (max 4)"),
@@ -217,7 +255,7 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
       description: "Reply in the thread of a review comment (answer a question, explain a decision).",
       inputSchema: {
         review_ref: z.string().describe('Review reference such as "WEB-R3"'),
-        comment_id: z.string().describe("Id of the top-level comment to reply to"),
+        comment_id: z.string().describe("Id of the comment or mark note to reply to"),
         body: z.string().min(1),
       },
     },

@@ -7,6 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { ReviewDetail } from "@rev/shared";
 import { Client, makeFixtures, startTestServer, type TestServer } from "../../server/test/helpers";
 import { RevApi, RevApiError } from "../src/api";
+import { submitReviewRound } from "../src/kit";
 import { createMcpServer } from "../src/mcp";
 import { buildProgram } from "../src/program";
 
@@ -96,6 +97,7 @@ describe("MCP server", () => {
         "list_my_tasks",
         "list_projects",
         "reply_to_review_comment",
+        "submit_review_round",
         "update_task_status",
         "whoami",
       ].sort(),
@@ -272,3 +274,80 @@ describe("CLI commands", () => {
     if (existsSync(bundle)) expect(statSync(bundle).mode & 0o111).not.toBe(0);
   });
 });
+
+describe("review rounds and mark notes", () => {
+  const env = () => ({ REV_URL: baseUrl, REV_TOKEN: agentToken, REV_CONFIG: path.join(server.dataDir, "unused.json") });
+  let overallId: string;
+  let taskRef: string;
+
+  it("shows mark notes nested under their comment and labels them in tasks", async () => {
+    const review = (await admin.get("/api/reviews/WEB-R1")).json as ReviewDetail;
+    const image = review.assets.find((a) => a.kind === "image")!;
+    const posted = await admin.post("/api/reviews/WEB-R1/comments", {
+      body: "Header needs polish",
+      assetId: image.id,
+      annotation: {
+        shapes: [
+          { type: "pin", x: 0.1, y: 0.1, color: "#ff3b30" },
+          { type: "rect", x: 0.4, y: 0.1, w: 0.2, h: 0.1, color: "#0a84ff" },
+        ],
+      },
+      marks: [{ index: 1, body: "Logo is blurry" }],
+    });
+    overallId = posted.json.id;
+    const markId = posted.json.marks[0].id;
+
+    const shown = (await cli(["review", "show", "WEB-R1"], env())).out;
+    expect(shown).toContain("== Round 1");
+    expect(shown).toContain("Header needs polish");
+    expect(shown).toMatch(/#2 \[open\] Logo is blurry \(comment [0-9a-f-]+\)/);
+
+    const task = await admin.post("/api/reviews/WEB-R1/tasks", { title: "Sharpen logo", commentIds: [markId], assigneeId: agentId });
+    taskRef = task.json.ref;
+    const detail = textOf(await call("get_task", { ref: taskRef, include_snapshots: false }));
+    expect(detail).toContain(`mark #2 of comment ${overallId}`);
+    expect(detail).toContain("From review: WEB-R1");
+  });
+
+  it("submits the fix as the next round via MCP", async () => {
+    const res = await call("submit_review_round", { review_ref: "WEB-R1", notes: "Replaced the logo with the SVG", files: [fixtures.png] });
+    expect(res.isError).toBeFalsy();
+    expect(textOf(res)).toContain(`Submitted round 2 of WEB-R1 with 1 asset(s). Addresses ${taskRef} (In review)`);
+    const review = (await admin.get("/api/reviews/WEB-R1")).json as ReviewDetail;
+    expect(review.rounds.map((r) => r.number)).toEqual([1, 2]);
+    expect(review.status).toBe("open");
+    expect((await admin.get(`/api/tasks/${taskRef}`)).json.status).toBe("in_review");
+  });
+
+  it("submits a round from the CLI and shows rounds and deliveries", async () => {
+    const out = await cli(["review", "round", "WEB-R1", "--notes", "Tweaked spacing", "--task", taskRef, "--caption-each", fixtures.png], env());
+    expect(out.out).toContain(`Submitted round 3 of WEB-R1 (1 assets). Addresses ${taskRef} (In review)`);
+    expect(out.err).toContain("Started draft round 3 of WEB-R1");
+
+    const shown = (await cli(["review", "show", "WEB-R1"], env())).out;
+    expect(shown).toContain("Round 3 of 3");
+    expect(shown).toContain("== Round 3 — by claude-bot (agent)");
+    expect(shown).toContain("Tweaked spacing");
+    expect(shown).toContain(`Addresses: ${taskRef} Sharpen logo`);
+    const task = (await cli(["task", "show", taskRef], env())).out;
+    expect(task).toContain("WEB-R1 round 3");
+    expect(task).toContain("WEB-R1 round 2");
+  });
+
+  it("leaves no draft round behind when a submission fails", async () => {
+    await expect(cli(["review", "round", "WEB-R1", "/nope/missing.png"], env())).rejects.toThrow("File not found");
+    expect(((await admin.get("/api/reviews/WEB-R1")).json as ReviewDetail).rounds).toHaveLength(3);
+
+    // A failure after the draft exists (here: the submit call) deletes the draft again.
+    const failing = new RevApi(baseUrl, agentToken);
+    failing.submitRound = async () => {
+      throw new Error("network went away");
+    };
+    await expect(submitReviewRound(failing, "WEB-R1", { files: [fixtures.png] })).rejects.toThrow("network went away");
+    expect(((await admin.get("/api/reviews/WEB-R1")).json as ReviewDetail).rounds.map((r) => r.number)).toEqual([1, 2, 3]);
+
+    const json = JSON.parse((await cli(["--json", "review", "round", "WEB-R1", fixtures.png], env())).out);
+    expect(json.round.number).toBe(4);
+  });
+});
+

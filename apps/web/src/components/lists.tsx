@@ -36,6 +36,7 @@ export function ReviewCard({ review }: { review: ReviewInfo }) {
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs text-zinc-500">{review.ref}</span>
           <ReviewStatusBadge status={review.status} />
+          {review.currentRound > 1 && <span className="text-xs text-zinc-500">round {review.currentRound}</span>}
           {review.task && <span className="truncate text-xs text-zinc-500">for {review.task.ref}</span>}
         </div>
         <div className="truncate text-sm font-medium group-hover:text-accent-700">{review.title}</div>
