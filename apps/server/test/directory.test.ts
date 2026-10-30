@@ -5,69 +5,20 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import type { AppContext } from "../src/context";
-import { DirectoryUnavailableError, escapeFilter, type Directory, type DirectoryResult } from "../src/lib/directory";
+import { escapeFilter } from "../src/lib/directory";
 import { syncDirectoryAccounts } from "../src/lib/directory-accounts";
+import { FakeDirectory, FakeWorld, fakeAccount as account } from "./fake-directory";
 import { Client } from "./helpers";
-
-interface FakeAccount {
-  logins: string[];
-  password: string;
-  id: string;
-  username: string;
-  email: string | null;
-  name: string;
-  enabled: boolean;
-  inGroup: boolean;
-}
-
-/** In-memory stand-in for Active Directory. */
-class FakeDirectory implements Directory {
-  readonly domain = "corp.example.com";
-  available = true;
-  accounts: FakeAccount[] = [];
-
-  private result(a: FakeAccount): DirectoryResult {
-    const user = { id: a.id, dn: `CN=${a.name},DC=corp`, username: a.username, email: a.email, name: a.name };
-    if (!a.enabled) return { user, allowed: false, reason: "The directory account is disabled" };
-    if (!a.inGroup) return { user, allowed: false, reason: "Not a member of Rev-Users" };
-    return { user, allowed: true };
-  }
-
-  async authenticate(login: string, password: string) {
-    if (!this.available) throw new DirectoryUnavailableError("down");
-    const a = this.accounts.find((x) => x.logins.includes(login.toLowerCase()));
-    if (!a || a.password !== password) return null;
-    return this.result(a);
-  }
-
-  async lookup(id: string) {
-    if (!this.available) throw new DirectoryUnavailableError("down");
-    const a = this.accounts.find((x) => x.id === id);
-    return a ? this.result(a) : null;
-  }
-}
-
-const account = (n: number, over: Partial<FakeAccount> = {}): FakeAccount => ({
-  logins: [`user${n}`, `user${n}@corp.example.com`],
-  password: `ad-password-${n}`,
-  id: `${n}`.padStart(32, "a"),
-  username: `user${n}`,
-  email: `user${n}@corp.example.com`,
-  name: `User ${n}`,
-  enabled: true,
-  inGroup: true,
-  ...over,
-});
 
 let ctx: AppContext;
 let app: Awaited<ReturnType<typeof createApp>>["app"];
-let dir: FakeDirectory;
+let dir: FakeWorld;
 let admin: Client;
 let dataDir: string;
 
 beforeAll(async () => {
   dataDir = mkdtempSync(path.join(tmpdir(), "rev-dir-test-"));
-  dir = new FakeDirectory();
+  dir = new FakeWorld();
   const created = await createApp(
     loadConfig({
       DATA_DIR: dataDir,
@@ -75,7 +26,7 @@ beforeAll(async () => {
       WEB_DIST: path.join(dataDir, "no-web"),
       AUTH_RATE_LIMIT_PER_MINUTE: "1000",
     }),
-    { logger: false, memoryDb: true, directory: dir },
+    { logger: false, memoryDb: true, directory: new FakeDirectory(dir) },
   );
   app = created.app;
   ctx = created.ctx;
@@ -124,7 +75,7 @@ describe("Active Directory sign-in", () => {
   });
 
   it("distinguishes bad passwords, disallowed accounts and outages", async () => {
-    dir.accounts.push(account(2, { inGroup: false }), account(3, { enabled: false }));
+    dir.accounts.push(account(2, { groups: [] }), account(3, { enabled: false }));
     expect((await signIn("user1", "wrong")).res.status).toBe(401);
     expect((await signIn("nobody", "x")).res.json.message).toBe("Incorrect username or password");
     const notInGroup = await signIn("user2", "ad-password-2");
@@ -170,36 +121,36 @@ describe("Active Directory sign-in", () => {
     const agentClient = new Client(app, { token: (await c.post(`/api/agents/${agent.id}/tokens`, { name: "t" })).json.token });
     expect((await agentClient.get("/api/tasks")).status).toBe(200);
 
-    dir.accounts[0]!.inGroup = false;
-    const r1 = await syncDirectoryAccounts(ctx.db, dir, app.log);
+    dir.accounts[0]!.groups = [];
+    const r1 = await syncDirectoryAccounts(ctx.db, ctx.directory!, app.log);
     expect(r1.suspended).toContain("User One");
     expect((await c.get("/api/auth/me")).status).toBe(401);
     expect((await agentClient.get("/api/tasks")).status).toBe(401);
     const suspended = ((await admin.get("/api/users")).json as any[]).find((u) => u.id === userId);
     expect(suspended).toMatchObject({ disabled: true, disabledReason: "directory" });
 
-    dir.accounts[0]!.inGroup = true;
-    const r2 = await syncDirectoryAccounts(ctx.db, dir, app.log);
+    dir.accounts[0]!.groups = ["Rev-Users"];
+    const r2 = await syncDirectoryAccounts(ctx.db, ctx.directory!, app.log);
     expect(r2.restored).toContain("User One");
     expect((await agentClient.get("/api/tasks")).status).toBe(200);
 
     // A Rev admin's own "disable" wins over the directory.
     await admin.patch(`/api/users/${userId}`, { disabled: true });
-    await syncDirectoryAccounts(ctx.db, dir, app.log);
+    await syncDirectoryAccounts(ctx.db, ctx.directory!, app.log);
     expect((await signIn("user1", "ad-password-1")).res.status).toBe(403);
     await admin.patch(`/api/users/${userId}`, { disabled: false });
   });
 
   it("never suspends anyone during an outage or when every account would be suspended", async () => {
     dir.available = false;
-    expect((await syncDirectoryAccounts(ctx.db, dir, app.log)).skipped).toBe("unavailable");
+    expect((await syncDirectoryAccounts(ctx.db, ctx.directory!, app.log)).skipped).toBe("unavailable");
     dir.available = true;
     dir.accounts.push(account(5));
     expect((await signIn("user5", "ad-password-5")).res.status).toBe(200);
 
     const saved = dir.accounts;
     dir.accounts = []; // e.g. a wrong base DN: every lookup comes back empty
-    const r = await syncDirectoryAccounts(ctx.db, dir, app.log);
+    const r = await syncDirectoryAccounts(ctx.db, ctx.directory!, app.log);
     expect(r.skipped).toBe("all-would-be-suspended");
     dir.accounts = saved;
     expect((await signIn("user1", "ad-password-1")).res.status).toBe(200);

@@ -62,6 +62,7 @@ export async function startSession(ctx: AppContext, req: FastifyRequest, reply: 
     expiresAt: new Date(Date.now() + ctx.config.sessionTtlDays * 86_400_000),
   });
   reply.setCookie(SESSION_COOKIE, token, cookieOptions(ctx));
+  await ctx.db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
 }
 
 export async function endSession(ctx: AppContext, req: FastifyRequest, reply: FastifyReply) {

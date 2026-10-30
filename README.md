@@ -130,7 +130,8 @@ deploy/           install / backup / restore scripts, Caddyfile, container entry
 | `REV_SETUP_TOKEN` | random | Fix the first-run setup token |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Media tools |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | `10` | Sign-in attempts per IP per minute |
-| `LDAP_*` | *(unset)* | Active Directory sign-in; see [docs/active-directory.md](docs/active-directory.md) |
+| `LDAP_*` | *(unset)* | Imported once into **Admin → Active Directory**, which is the source of truth afterwards; see [docs/active-directory.md](docs/active-directory.md) |
+| `REV_SECRET_KEY` | key file in `DATA_DIR` | Encrypts secrets stored in the database (e.g. the AD bind password) |
 
 ## License
 

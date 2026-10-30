@@ -5,6 +5,7 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public details?: unknown,
   ) {
     super(message);
   }
@@ -21,7 +22,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
     const err = (data ?? {}) as Partial<ApiErrorBody>;
-    throw new ApiError(res.status, err.error ?? "error", err.message ?? res.statusText);
+    throw new ApiError(res.status, err.error ?? "error", err.message ?? res.statusText, err.details);
   }
   return data as T;
 }
@@ -29,6 +30,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body: unknown = {}) => request<T>("POST", url, body),
+  put: <T>(url: string, body: unknown) => request<T>("PUT", url, body),
   patch: <T>(url: string, body: unknown) => request<T>("PATCH", url, body),
   del: <T>(url: string) => request<T>("DELETE", url),
 };

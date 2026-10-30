@@ -34,7 +34,13 @@ export interface Config {
   logLevel: string;
   /** Sign-in attempts allowed per IP per minute. */
   authRateLimit: number;
-  /** Active Directory / LDAP sign-in; null when LDAP_URL is not set. */
+  /** Key for secrets stored in the database; a key file in dataDir is used when unset. */
+  secretKey: string | null;
+  /**
+   * Active Directory settings from LDAP_* env vars. Only used to seed the
+   * settings in the database on first start; afterwards Admin → Active
+   * Directory is the source of truth.
+   */
   ldap: LdapConfig | null;
 }
 
@@ -113,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     setupToken: env.REV_SETUP_TOKEN || null,
     logLevel: env.LOG_LEVEL ?? "info",
     authRateLimit: num(env.AUTH_RATE_LIMIT_PER_MINUTE, 10),
+    secretKey: env.REV_SECRET_KEY || null,
     ldap: loadLdap(env),
   };
 }

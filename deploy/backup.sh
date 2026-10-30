@@ -18,7 +18,8 @@ docker compose exec -T db pg_dump -U rev -d rev --format=custom > "$dest/rev.dum
 
 echo "==> Copying media"
 media="${REV_MEDIA_DIR:-./data/rev}"
-tar -C "$media" -cf "$dest/media.tar" media
+# secret.key decrypts secrets stored in the database (e.g. the AD bind password).
+tar -C "$media" -cf "$dest/media.tar" media $( [ -f "$media/secret.key" ] && echo secret.key )
 
 find backups -mindepth 1 -maxdepth 1 -type d -mtime "+${KEEP_DAYS:-14}" -exec rm -rf {} +
 echo "Backup written to $dest ($(du -sh "$dest" | cut -f1))"

@@ -2,7 +2,9 @@
 // service account, verifies passwords by binding as the user over TLS, and
 // requires membership (incl. nested) of the configured group.
 import { AndFilter, Client, EqualityFilter, InvalidCredentialsError, type Entry } from "ldapts";
+import { X509Certificate } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
+import type { CaCertificateInfo, LdapCheck, LdapTestReport } from "@rev/shared";
 import type { LdapConfig } from "../config";
 
 export interface DirectoryUser {
@@ -21,12 +23,47 @@ export interface DirectoryResult {
   reason?: string;
 }
 
+export interface DirectoryMember extends DirectoryUser {
+  enabled: boolean;
+}
+
 export interface Directory {
   readonly domain: string;
   /** null means unknown account or wrong password. */
   authenticate(login: string, password: string): Promise<DirectoryResult | null>;
   /** Re-check an account by id; null means it no longer exists. */
   lookup(id: string): Promise<DirectoryResult | null>;
+  /** Connection checks for the admin UI. */
+  diagnose(): Promise<LdapTestReport>;
+  /** Members of the allowed group (incl. nested); null when sign-in is not group-restricted. */
+  members(): Promise<DirectoryMember[] | null>;
+  /** CA certificates published in the directory (read without verifying TLS; show fingerprints). */
+  fetchCa(): Promise<{ pem: string; info: CaCertificateInfo }[]>;
+}
+
+/** Subject/issuer/expiry/fingerprint of every certificate in a PEM bundle; throws on invalid PEM. */
+export function describeCertificates(pem: string): CaCertificateInfo[] {
+  const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? [];
+  if (!blocks.length) throw new Error("No PEM certificate found");
+  return blocks.map((block) => {
+    const cert = new X509Certificate(block);
+    return {
+      subject: cert.subject.replace(/\n/g, ", "),
+      issuer: cert.issuer.replace(/\n/g, ", "),
+      validTo: new Date(cert.validTo).toISOString(),
+      fingerprint256: cert.fingerprint256,
+    };
+  });
+}
+
+/** Turns low-level TLS/LDAP errors into something an admin can act on. */
+export function explainLdapError(err: unknown) {
+  const msg = (err as Error)?.message ?? String(err);
+  if (err instanceof InvalidCredentialsError) return "Bind account or password rejected";
+  if (/unable to verify|self[- ]signed|certificate chain/i.test(msg)) return `Certificate not trusted: add the directory's CA certificate (${msg})`;
+  if (/does not match certificate|altnames/i.test(msg)) return `Use the server name from its certificate (${msg})`;
+  if (/timeout|ECONNREFUSED|EHOSTUNREACH|ENOTFOUND/i.test(msg)) return `Server unreachable (${msg})`;
+  return msg;
 }
 
 /** The directory could not be reached; distinct from "not allowed" so callers never lock people out on outages. */
@@ -54,6 +91,97 @@ function first(v: Entry[string] | undefined): string | null {
 export class LdapDirectory implements Directory {
   readonly domain: string;
   private groupDn: string | null | undefined;
+
+  async diagnose(): Promise<LdapTestReport> {
+    const report: LdapTestReport = { ok: false, servers: [], group: null };
+    for (const url of this.cfg.urls) {
+      const checks: LdapCheck[] = [];
+      let client: Client | undefined;
+      try {
+        client = await this.connect(url, this.cfg.bindDn, this.cfg.bindPassword);
+        checks.push({ name: "TLS + service account", ok: true, detail: `Connected and bound as ${this.cfg.bindDn}` });
+        const base = await client.search(this.cfg.baseDn, { scope: "base", filter: "(objectClass=*)", attributes: ["distinguishedName"] });
+        checks.push({ name: "Base DN", ok: base.searchEntries.length === 1, detail: base.searchEntries.length ? this.cfg.baseDn : "Not found" });
+        if (this.cfg.allowedGroup) {
+          this.groupDn = undefined; // always re-resolve when testing
+          try {
+            const dn = await this.resolveGroup(client);
+            const { searchEntries } = await client.search(this.cfg.baseDn, {
+              scope: "sub",
+              filter: `(&(objectCategory=person)(objectClass=user)(memberOf:${IN_CHAIN}:=${escapeFilter(dn!)}))`,
+              attributes: ["distinguishedName"],
+              sizeLimit: 5000,
+            });
+            checks.push({ name: "Allowed group", ok: true, detail: `${dn} (${searchEntries.length} member${searchEntries.length === 1 ? "" : "s"})` });
+            report.group ??= { dn: dn!, members: searchEntries.length };
+          } catch (err) {
+            checks.push({ name: "Allowed group", ok: false, detail: (err as Error).message });
+          }
+        } else {
+          checks.push({ name: "Allowed group", ok: true, detail: "None: every enabled account may sign in" });
+        }
+      } catch (err) {
+        checks.push({ name: "TLS + service account", ok: false, detail: explainLdapError(err) });
+      } finally {
+        await client?.unbind().catch(() => undefined);
+      }
+      report.servers.push({ url, ok: checks.every((c) => c.ok), checks });
+    }
+    report.ok = report.servers.length > 0 && report.servers.every((s) => s.ok);
+    return report;
+  }
+
+  async members(): Promise<DirectoryMember[] | null> {
+    if (!this.cfg.allowedGroup) return null;
+    return this.withService(async (client) => {
+      const dn = await this.resolveGroup(client);
+      const { searchEntries } = await client.search(this.cfg.baseDn, {
+        scope: "sub",
+        filter: `(&(objectCategory=person)(objectClass=user)(memberOf:${IN_CHAIN}:=${escapeFilter(dn!)}))`,
+        attributes: USER_ATTRS,
+        explicitBufferAttributes: ["objectGUID"],
+        sizeLimit: 5000,
+      });
+      return searchEntries.map((e) => {
+        const { disabled, ...user } = this.toUser(e);
+        return { ...user, enabled: !disabled };
+      });
+    });
+  }
+
+  async fetchCa() {
+    let lastError: unknown;
+    for (const url of this.cfg.urls) {
+      // Deliberately unverified: this is how the CA is obtained in the first place. Admins confirm the fingerprint.
+      const client = new Client({ url, timeout: 10_000, connectTimeout: 5_000, tlsOptions: { rejectUnauthorized: false }, strictDN: false });
+      try {
+        if (this.cfg.startTls && url.startsWith("ldap://")) await client.startTLS({ rejectUnauthorized: false });
+        await client.bind(this.cfg.bindDn, this.cfg.bindPassword);
+        const root = await client.search("", { scope: "base", filter: "(objectClass=*)", attributes: ["configurationNamingContext"] });
+        const configNc = first(root.searchEntries[0]?.configurationNamingContext);
+        if (!configNc) throw new Error("Directory did not report configurationNamingContext");
+        const { searchEntries } = await client.search(`CN=AIA,CN=Public Key Services,CN=Services,${configNc}`, {
+          scope: "one",
+          filter: "(objectClass=certificationAuthority)",
+          attributes: ["cACertificate"],
+          explicitBufferAttributes: ["cACertificate"],
+        });
+        const ders = searchEntries.flatMap((e) => {
+          const v = e.cACertificate;
+          return (Array.isArray(v) ? v : [v]).filter((x): x is Buffer => Buffer.isBuffer(x));
+        });
+        return ders.map((der) => {
+          const pem = `-----BEGIN CERTIFICATE-----\n${der.toString("base64").match(/.{1,64}/g)!.join("\n")}\n-----END CERTIFICATE-----\n`;
+          return { pem, info: describeCertificates(pem)[0]! };
+        });
+      } catch (err) {
+        lastError = err;
+      } finally {
+        await client.unbind().catch(() => undefined);
+      }
+    }
+    throw new DirectoryUnavailableError(explainLdapError(lastError));
+  }
 
   constructor(
     private readonly cfg: LdapConfig,

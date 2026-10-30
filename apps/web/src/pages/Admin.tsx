@@ -1,15 +1,40 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Mail, Trash2 } from "lucide-react";
-import { Navigate } from "react-router";
+import { Navigate, NavLink, Outlet } from "react-router";
 import type { GlobalRole, InviteInfo, UserDetail } from "@rev/shared";
 import { api } from "../api";
 import { useUser } from "../auth";
-import { PageHeader } from "../components/Layout";
 import { Badge, Button, Card, ErrorBox, Field, Input, Modal, Select, UserChip } from "../components/ui";
-import { timeAgo } from "../lib";
+import { cx, timeAgo } from "../lib";
 
-export function Admin() {
+export function AdminLayout() {
+  const me = useUser();
+  if (me.role !== "admin") return <Navigate to="/" replace />;
+  const tab = ({ isActive }: { isActive: boolean }) =>
+    cx(
+      "border-b-2 px-1 pb-2.5 text-sm font-medium transition-colors",
+      isActive ? "border-accent-600 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800",
+    );
+  return (
+    <div>
+      <div className="border-b border-zinc-200 bg-white px-8 pt-5">
+        <h1 className="text-xl font-semibold tracking-tight">Admin</h1>
+        <nav className="mt-4 flex gap-6">
+          <NavLink to="/admin" end className={tab}>
+            People
+          </NavLink>
+          <NavLink to="/admin/active-directory" className={tab}>
+            Active Directory
+          </NavLink>
+        </nav>
+      </div>
+      <Outlet />
+    </div>
+  );
+}
+
+export function AdminPeople() {
   const me = useUser();
   const qc = useQueryClient();
   const [inviting, setInviting] = useState(false);
@@ -29,21 +54,20 @@ export function Admin() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invites"] }),
   });
 
-  if (me.role !== "admin") return <Navigate to="/" replace />;
   const humans = (users.data ?? []).filter((u) => u.kind === "human");
 
   return (
     <div>
-      <PageHeader
-        title="Admin"
-        subtitle="Local accounts sign in with email and password (Rev does not send email; share invite and reset links yourself). Active Directory accounts appear here after their first sign-in."
-        actions={
+      <div className="mx-auto max-w-4xl space-y-6 px-8 py-6">
+        <div className="flex items-start justify-between gap-4">
+          <p className="text-sm text-zinc-500">
+            Local accounts sign in with email and password (Rev does not send email; share invite and reset links yourself). Active
+            Directory accounts appear here after their first sign-in.
+          </p>
           <Button variant="primary" onClick={() => setInviting(true)}>
             <Mail className="size-4" /> Invite someone
           </Button>
-        }
-      />
-      <div className="mx-auto max-w-4xl space-y-6 px-8 py-6">
+        </div>
         <ErrorBox error={users.error ?? update.error ?? reset.error} />
         <section className="space-y-2">
           <h2 className="text-sm font-semibold text-zinc-700">People</h2>

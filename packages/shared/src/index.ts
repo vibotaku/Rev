@@ -251,7 +251,123 @@ export interface UserDetail extends UserSummary {
   authSource: AuthSource;
   /** Directory login name for AD accounts. */
   username: string | null;
+  lastLoginAt: string | null;
   createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Active Directory administration
+
+const ldapUrl = z
+  .string()
+  .trim()
+  .regex(/^ldaps?:\/\/[^\s/]+(:\d+)?\/?$/i, "Use ldaps://host[:port] (or ldap:// with StartTLS)");
+
+export const ldapSettingsBody = z
+  .object({
+    enabled: z.boolean(),
+    urls: z.array(ldapUrl).max(10),
+    baseDn: z.string().trim().max(500),
+    bindDn: z.string().trim().max(500),
+    /** Omit (or leave empty) to keep the stored password. */
+    bindPassword: z.string().max(500).optional(),
+    allowedGroup: z.string().trim().max(500).nullable(),
+    domain: z.string().trim().toLowerCase().max(253),
+    caPem: z.string().max(100_000).nullable(),
+    startTls: z.boolean(),
+    verifyTls: z.boolean(),
+    syncMinutes: z.number().int().min(0).max(1440),
+    /** Save even if the connection test fails. */
+    force: z.boolean().optional(),
+  })
+  .superRefine((s, ctx) => {
+    if (s.urls.some((u) => /^ldap:/i.test(u)) && !s.startTls) {
+      ctx.addIssue({ code: "custom", path: ["urls"], message: "Plain ldap:// would send passwords unencrypted: use ldaps:// or enable StartTLS" });
+    }
+    if (s.enabled) {
+      if (!s.urls.length) ctx.addIssue({ code: "custom", path: ["urls"], message: "Add at least one domain controller" });
+      if (!s.baseDn) ctx.addIssue({ code: "custom", path: ["baseDn"], message: "Base DN is required" });
+      if (!s.bindDn) ctx.addIssue({ code: "custom", path: ["bindDn"], message: "Bind account is required" });
+    }
+  });
+export type LdapSettingsBody = z.infer<typeof ldapSettingsBody>;
+
+export const ldapTestBody = z.object({
+  settings: ldapSettingsBody,
+  /** Optionally try a real sign-in with these credentials. */
+  login: z.string().trim().max(320).optional(),
+  password: z.string().max(200).optional(),
+});
+
+export interface CaCertificateInfo {
+  subject: string;
+  issuer: string;
+  validTo: string;
+  fingerprint256: string;
+}
+
+export interface LdapSettingsInfo {
+  enabled: boolean;
+  urls: string[];
+  baseDn: string;
+  bindDn: string;
+  hasBindPassword: boolean;
+  allowedGroup: string | null;
+  domain: string;
+  caPem: string | null;
+  caCertificates: CaCertificateInfo[];
+  startTls: boolean;
+  verifyTls: boolean;
+  syncMinutes: number;
+  updatedAt: string | null;
+  updatedBy: UserSummary | null;
+}
+
+export interface LdapSyncStatus {
+  at: string;
+  checked: number;
+  suspended: string[];
+  restored: string[];
+  skipped?: string;
+  error?: string;
+}
+
+export interface LdapAdminInfo {
+  settings: LdapSettingsInfo;
+  lastSync: LdapSyncStatus | null;
+  nextSyncAt: string | null;
+  /** LDAP_* environment variables are set but ignored because settings live in the database. */
+  envIgnored: boolean;
+}
+
+export interface LdapCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface LdapTestReport {
+  ok: boolean;
+  servers: { url: string; ok: boolean; checks: LdapCheck[] }[];
+  group: { dn: string; members: number } | null;
+  signIn?: { ok: boolean; allowed: boolean; detail: string };
+}
+
+export interface LdapAccountInfo {
+  /** Present once the person has signed in to Rev. */
+  user: UserDetail | null;
+  username: string;
+  name: string;
+  email: string | null;
+  status: "active" | "suspended" | "disabled" | "never_signed_in";
+  inGroup: boolean | null;
+}
+
+export interface LdapAccountsInfo {
+  accounts: LdapAccountInfo[];
+  /** Why group members could not be listed, if they could not. */
+  directoryError: string | null;
+  groupRestricted: boolean;
 }
 
 /** Public sign-in options, shown on the login page. */

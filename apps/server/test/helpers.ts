@@ -85,6 +85,7 @@ export class Client {
   get = (url: string, headers?: Record<string, string>) => this.req("GET", url, undefined, headers);
   post = (url: string, body: unknown = {}, headers?: Record<string, string>) => this.req("POST", url, body, headers);
   patch = (url: string, body: unknown) => this.req("PATCH", url, body);
+  put = (url: string, body: unknown) => this.req("PUT", url, body);
   del = (url: string) => this.req("DELETE", url);
 
   async upload(url: string, filePath: string, mime: string, filename = path.basename(filePath)) {

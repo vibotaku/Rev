@@ -30500,6 +30500,38 @@ var taskFromReviewBody = external_exports.object({
   priority: external_exports.enum(TASK_PRIORITIES).default("none"),
   assigneeId: external_exports.uuid().nullable().default(null)
 });
+var ldapUrl = external_exports.string().trim().regex(/^ldaps?:\/\/[^\s/]+(:\d+)?\/?$/i, "Use ldaps://host[:port] (or ldap:// with StartTLS)");
+var ldapSettingsBody = external_exports.object({
+  enabled: external_exports.boolean(),
+  urls: external_exports.array(ldapUrl).max(10),
+  baseDn: external_exports.string().trim().max(500),
+  bindDn: external_exports.string().trim().max(500),
+  /** Omit (or leave empty) to keep the stored password. */
+  bindPassword: external_exports.string().max(500).optional(),
+  allowedGroup: external_exports.string().trim().max(500).nullable(),
+  domain: external_exports.string().trim().toLowerCase().max(253),
+  caPem: external_exports.string().max(1e5).nullable(),
+  startTls: external_exports.boolean(),
+  verifyTls: external_exports.boolean(),
+  syncMinutes: external_exports.number().int().min(0).max(1440),
+  /** Save even if the connection test fails. */
+  force: external_exports.boolean().optional()
+}).superRefine((s, ctx) => {
+  if (s.urls.some((u) => /^ldap:/i.test(u)) && !s.startTls) {
+    ctx.addIssue({ code: "custom", path: ["urls"], message: "Plain ldap:// would send passwords unencrypted: use ldaps:// or enable StartTLS" });
+  }
+  if (s.enabled) {
+    if (!s.urls.length) ctx.addIssue({ code: "custom", path: ["urls"], message: "Add at least one domain controller" });
+    if (!s.baseDn) ctx.addIssue({ code: "custom", path: ["baseDn"], message: "Base DN is required" });
+    if (!s.bindDn) ctx.addIssue({ code: "custom", path: ["bindDn"], message: "Bind account is required" });
+  }
+});
+var ldapTestBody = external_exports.object({
+  settings: ldapSettingsBody,
+  /** Optionally try a real sign-in with these credentials. */
+  login: external_exports.string().trim().max(320).optional(),
+  password: external_exports.string().max(200).optional()
+});
 function formatTimestamp(ms) {
   const total = ms / 1e3;
   const m = Math.floor(total / 60);

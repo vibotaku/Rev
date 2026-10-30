@@ -35,6 +35,7 @@ export function userDetail(u: UserRow): UserDetail {
     disabledReason: u.disabledAt ? (u.disabledReason ?? "admin") : null,
     authSource: u.authSource,
     username: u.username,
+    lastLoginAt: iso(u.lastLoginAt),
     createdAt: u.createdAt.toISOString(),
   };
 }

@@ -12,8 +12,9 @@ import { openDatabase } from "./db";
 import { users } from "./db/schema";
 import { registerAuth } from "./lib/auth";
 import { randomToken } from "./lib/crypto";
-import { syncDirectoryAccounts } from "./lib/directory-accounts";
-import { LdapDirectory, type Directory } from "./lib/directory";
+import type { Directory } from "./lib/directory";
+import { DirectoryService, type DirectoryFactory } from "./lib/directory-service";
+import { Secrets } from "./lib/secrets";
 import { HttpError } from "./lib/errors";
 import { MediaProcessor } from "./media/processor";
 import { Storage } from "./media/storage";
@@ -22,6 +23,7 @@ import agentRoutes from "./routes/agents";
 import authRoutes from "./routes/auth";
 import dashboardRoutes from "./routes/dashboard";
 import enrollmentRoutes from "./routes/enrollment";
+import ldapAdminRoutes from "./routes/ldap-admin";
 import mediaRoutes from "./routes/media";
 import projectRoutes from "./routes/projects";
 import reviewRoutes from "./routes/reviews";
@@ -31,8 +33,10 @@ export interface CreateAppOptions {
   logger?: FastifyServerOptions["logger"];
   /** Use a throwaway in-memory database (tests). */
   memoryDb?: boolean;
-  /** Override the directory (tests); defaults to LDAP from config. */
+  /** Tests: a fixed directory instead of the stored Active Directory settings. */
   directory?: Directory | null;
+  /** Tests: builds directories from stored/draft settings instead of real LDAP. */
+  directoryFactory?: DirectoryFactory;
 }
 
 export async function createApp(config: Config, options: CreateAppOptions = {}) {
@@ -48,13 +52,18 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
   const processor = new MediaProcessor(database.db, storage, config, app.log);
 
   const [{ n }] = (await database.db.select({ n: count() }).from(users)) as [{ n: number }];
-  const directory = options.directory !== undefined ? options.directory : config.ldap ? new LdapDirectory(config.ldap, app.log) : null;
+  const secrets = await Secrets.load(config.secretKey, config.dataDir);
+  const directories = new DirectoryService(database.db, app.log, secrets, options.directoryFactory, options.directory ?? null);
+  await directories.init(options.directory !== undefined ? null : config.ldap);
   const ctx: AppContext = {
     config,
     db: database.db,
     storage,
     processor,
-    directory,
+    directories,
+    get directory() {
+      return directories.directory;
+    },
     setup: { token: Number(n) === 0 ? (config.setupToken ?? randomToken(18)) : null },
   };
 
@@ -123,6 +132,7 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
     adminRoutes,
     agentRoutes,
     enrollmentRoutes,
+    ldapAdminRoutes,
     projectRoutes,
     taskRoutes,
     reviewRoutes,
@@ -132,21 +142,8 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
     await routes(app, ctx);
   }
 
-  // Periodically re-check directory accounts so people who leave lose access (and their agents stop).
-  let syncTimer: NodeJS.Timeout | undefined;
-  const syncMinutes = config.ldap?.syncMinutes ?? 0;
-  if (directory && syncMinutes > 0) {
-    const run = () =>
-      syncDirectoryAccounts(ctx.db, directory, app.log)
-        .then((r) => (r.suspended.length || r.restored.length) && app.log.info(r, "directory sync"))
-        .catch((err) => app.log.error({ err }, "directory sync failed"));
-    syncTimer = setInterval(run, syncMinutes * 60_000);
-    syncTimer.unref();
-    setTimeout(run, 30_000).unref();
-  }
-
   app.addHook("onClose", async () => {
-    clearInterval(syncTimer);
+    directories.stop();
     await processor.idle();
     await database.close();
   });

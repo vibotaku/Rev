@@ -55,6 +55,7 @@ export const users = pgTable(
     disabledAt: ts("disabled_at"),
     /** "admin": disabled in Rev. "directory": suspended because AD no longer allows the account (lifted automatically). */
     disabledReason: text("disabled_reason").$type<DisabledReason>(),
+    lastLoginAt: ts("last_login_at"),
     createdAt: createdAt(),
   },
   (t) => [index("users_owner_idx").on(t.ownerId)],
@@ -84,6 +85,14 @@ export const enrollmentKeys = pgTable(
   },
   (t) => [index("enrollment_keys_created_by_idx").on(t.createdBy)],
 );
+
+/** Server-wide settings edited in the admin UI (e.g. Active Directory). Secrets inside are encrypted. */
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<Record<string, unknown>>().notNull(),
+  updatedBy: uuid("updated_by").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
 
 export const sessions = pgTable(
   "sessions",

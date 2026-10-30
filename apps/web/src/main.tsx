@@ -7,7 +7,8 @@ import "./index.css";
 import { ApiError } from "./api";
 import { Layout } from "./components/Layout";
 import { Account } from "./pages/Account";
-import { Admin } from "./pages/Admin";
+import { AdminLayout, AdminPeople } from "./pages/Admin";
+import { AdminActiveDirectory } from "./pages/AdminActiveDirectory";
 import { Agents } from "./pages/Agents";
 import { Dashboard } from "./pages/Dashboard";
 import { Invite, Login, Setup } from "./pages/Auth";
@@ -38,7 +39,14 @@ const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: "projects", element: <Projects /> },
       { path: "agents", element: <Agents /> },
-      { path: "admin", element: <Admin /> },
+      {
+        path: "admin",
+        element: <AdminLayout />,
+        children: [
+          { index: true, element: <AdminPeople /> },
+          { path: "active-directory", element: <AdminActiveDirectory /> },
+        ],
+      },
       { path: "account", element: <Account /> },
       { path: "p/:key/tasks/:number", element: <TaskPage /> },
       { path: "p/:key/reviews/:number", element: <ReviewPage /> },

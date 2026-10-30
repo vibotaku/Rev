@@ -29,6 +29,13 @@
       "when": 1793317204152,
       "tag": "0003_directory_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793331408841,
+      "tag": "0004_settings",
+      "breakpoints": true
     }
   ]
 }
