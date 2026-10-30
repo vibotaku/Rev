@@ -22,4 +22,5 @@ media="${REV_MEDIA_DIR:-./data/rev}"
 tar -C "$media" -cf "$dest/media.tar" media $( [ -f "$media/secret.key" ] && echo secret.key )
 
 find backups -mindepth 1 -maxdepth 1 -type d -mtime "+${KEEP_DAYS:-14}" -exec rm -rf {} +
-echo "Backup written to $dest ($(du -sh "$dest" | cut -f1))"
+# --apparent-size: on ZFS and other compressing filesystems plain du lags right after a write.
+echo "Backup written to $dest ($(du -sh --apparent-size "$dest" | cut -f1))"
