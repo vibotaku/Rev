@@ -33,8 +33,7 @@ import { cx, taskPath, timeAgo } from "../lib";
 import { useMembers } from "../pages/Project";
 import { CommentCard, EmptyComments } from "./CommentsPanel";
 import { CreateTaskDialog } from "./CreateTaskDialog";
-import { MediaStage } from "./MediaStage";
-import type { Overlay } from "./MediaStage";
+import { MARKS_VISIBLE_S, MediaStage, type Overlay } from "./MediaStage";
 import { NewRoundDialog, RoundCard, RoundTabs } from "./Rounds";
 import { COLORS, renderSnapshot, type Tool } from "./shapes";
 
@@ -45,6 +44,9 @@ const TOOLS: { id: Tool; icon: React.ReactNode; label: string; key: string }[] =
   { id: "arrow", icon: <ArrowUpRight className="size-4" />, label: "Arrow (A)", key: "a" },
   { id: "pen", icon: <Pencil className="size-4" />, label: "Draw (D)", key: "d" },
 ];
+
+/** Closer than this (s) to a comment's time counts as its own frame; further off, its marks are drawn faded. */
+const ON_FRAME_S = 0.02;
 
 function isTyping(e: KeyboardEvent) {
   const t = e.target as HTMLElement;
@@ -168,15 +170,21 @@ export function ReviewPage() {
 
   const selectComment = useCallback(
     (c: ReviewCommentInfo) => {
+      if (c.id !== selectedId) setDraft([]);
       setSelectedId(c.id);
-      setDraft([]);
       if (c.assetId && c.assetId !== asset?.id) setAssetId(c.assetId);
+      // Picking the selected comment again goes back to its frame (the effect above only runs on a change).
+      const v = mediaRef.current;
+      if (c.assetId === asset?.id && c.timestampMs != null && v instanceof HTMLVideoElement && v.readyState >= 1) {
+        v.pause();
+        v.currentTime = c.timestampMs / 1000;
+      }
       setParams((p) => {
         p.set("comment", c.id);
         return p;
       }, { replace: true });
     },
-    [asset?.id, setParams],
+    [asset?.id, selectedId, setDraft, setParams],
   );
 
   const refresh = (r?: ReviewDetail) => {
@@ -189,7 +197,7 @@ export function ReviewPage() {
   // What the comment will carry for the agent, spelled out in the composer.
   const withTime = asset?.kind === "video" && (attachTime || draft.length > 0);
   const pinnedAt = draft.length && draftAt != null ? draftAt : time;
-  const moved = draft.length > 0 && draftAt != null && Math.abs(time - draftAt) > 0.05;
+  const moved = draft.length > 0 && draftAt != null && Math.abs(time - draftAt) > ON_FRAME_S;
   const agentGets = [
     withTime && "the exact time",
     draft.length > 0 && (draft.length > 1 ? "each mark's position and note" : "the mark's position and note"),
@@ -222,7 +230,8 @@ export function ReviewPage() {
           ...created.marks.map((m): [string, Shape[], number[]] => [m.id, [draft[m.markIndex! - 1]!], [m.markIndex!]]),
         ];
         for (const [id, shapes, labels] of shots) {
-          const blob = await renderSnapshot(media, shapes, labels).catch(() => null);
+          const tag = isVideo && timestampMs != null ? formatTimestamp(timestampMs, true) : undefined;
+          const blob = await renderSnapshot(media, shapes, labels, tag).catch(() => null);
           if (blob) await upload(`/api/comments/${id}/snapshot`, blob, "snapshot.jpg").catch(() => undefined);
         }
       }
@@ -356,20 +365,27 @@ export function ReviewPage() {
     .filter((c) => c.assetId === asset?.id && c.timestampMs != null)
     .map((c) => ({ id: c.id, timestampMs: c.timestampMs!, status: c.status, selected: c.id === selectedId }));
 
-  // What to draw over the media: the selected comment, or comments near the playhead.
-  let overlay: Overlay | null = null;
+  // What to draw over the media: the selected comment, else (on video) every comment near the playhead.
+  // Video marks only show within MARKS_VISIBLE_S of their time, faded off their exact frame.
+  const isVideo = asset?.kind === "video";
+  const offBy = (c: ReviewCommentInfo) => (isVideo && c.timestampMs != null ? Math.abs(c.timestampMs / 1000 - time) : 0);
+  const showsHere = (c: ReviewCommentInfo) => c.assetId === asset?.id && !!c.annotation?.shapes.length && offBy(c) <= MARKS_VISIBLE_S;
+  const overlayOf = (c: ReviewCommentInfo, highlight: number | null = null): Overlay => ({
+    id: c.id,
+    shapes: c.annotation!.shapes,
+    labels: c.annotation!.shapes.map((_, i) => i + 1),
+    highlight,
+    timestampMs: isVideo ? c.timestampMs : null,
+    faded: offBy(c) > ON_FRAME_S,
+  });
   const selectedRoot = selectedComment?.markOf ? comments.find((c) => c.id === selectedComment.markOf) : selectedComment;
-  if (selectedRoot?.assetId === asset?.id && selectedRoot?.annotation) {
-    const shapes = selectedRoot.annotation.shapes;
-    overlay = {
-      shapes,
-      labels: shapes.map((_, i) => i + 1),
-      highlight: selectedComment?.markIndex != null ? selectedComment.markIndex - 1 : null,
-    };
-  } else if (!draft.length && asset?.kind === "video") {
-    const near = topLevel.filter((c) => c.assetId === asset.id && c.timestampMs != null && Math.abs(c.timestampMs / 1000 - time) < 0.4);
-    overlay = { shapes: near.flatMap((c) => c.annotation?.shapes ?? []) };
+  let overlays: Overlay[] = [];
+  if (selectedRoot && showsHere(selectedRoot)) {
+    overlays = [overlayOf(selectedRoot, selectedComment?.markIndex != null ? selectedComment.markIndex - 1 : null)];
+  } else if (!draft.length && isVideo) {
+    overlays = topLevel.filter(showsHere).map((c) => overlayOf(c));
   }
+  const draftPin = isVideo && draft.length && draftAt != null ? { timestampMs: Math.round(draftAt * 1000), faded: moved } : null;
 
   const checkedComments = comments.filter((c) => checked.has(c.id));
   const canChangeRound = !!round && (round.createdBy.id === me.id || review.can.decide);
@@ -622,7 +638,8 @@ export function ReviewPage() {
                 color={color}
                 draft={draft}
                 onDraftChange={setDraft}
-                overlay={overlay}
+                draftPin={draftPin}
+                overlays={overlays}
                 markers={markers}
                 onMarkerClick={(id) => {
                   const c = topLevel.find((x) => x.id === id);

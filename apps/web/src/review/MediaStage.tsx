@@ -5,11 +5,19 @@ import { Spinner } from "../components/ui";
 import { cx } from "../lib";
 import { shapeFromDrag, ShapesSvg, type Tool } from "./shapes";
 
-/** Shapes drawn over the media for an existing comment; `highlight` singles out one mark. */
+/** Seconds either side of a video comment's time during which its marks are drawn: a 2.5 s bracket. */
+export const MARKS_VISIBLE_S = 1.25;
+
+/** Shapes drawn over the media for one existing comment; `highlight` singles out one mark. */
 export interface Overlay {
+  id: string;
   shapes: Shape[];
   labels?: (number | null)[];
   highlight?: number | null;
+  /** Video comments: the exact time, tagged beside the first mark. */
+  timestampMs?: number | null;
+  /** Drawn on a frame near, not at, the comment's time. */
+  faded?: boolean;
 }
 
 export interface Marker {
@@ -27,7 +35,8 @@ export function MediaStage({
   color,
   draft,
   onDraftChange,
-  overlay,
+  draftPin,
+  overlays,
   markers,
   onMarkerClick,
   mediaRef,
@@ -38,7 +47,9 @@ export function MediaStage({
   color: string;
   draft: Shape[];
   onDraftChange: (shapes: Shape[]) => void;
-  overlay: Overlay | null;
+  /** Video time the draft marks are pinned to, and whether the video has moved off it. */
+  draftPin: { timestampMs: number; faded: boolean } | null;
+  overlays: Overlay[];
   markers: Marker[];
   onMarkerClick: (id: string) => void;
   mediaRef: React.RefObject<HTMLVideoElement | HTMLImageElement | null>;
@@ -130,7 +141,10 @@ export function MediaStage({
                 className="size-full"
                 preload="auto"
                 playsInline
-                onLoadedMetadata={(e) => setNatural({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight })}
+                onLoadedMetadata={(e) => {
+                  setNatural({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight });
+                  onTime(e.currentTarget.currentTime);
+                }}
                 onTimeUpdate={(e) => onTime(e.currentTarget.currentTime)}
                 onSeeked={(e) => onTime(e.currentTarget.currentTime)}
                 onClick={(e) => (e.currentTarget.paused ? e.currentTarget.play() : e.currentTarget.pause())}
@@ -157,10 +171,34 @@ export function MediaStage({
               onPointerUp={onPointerUp}
               onPointerCancel={() => setGesture(null)}
             >
-              {overlay && <ShapesSvg shapes={overlay.shapes} labels={overlay.labels} highlight={overlay.highlight} w={nw} h={nh} />}
+              {overlays.map((o) => (
+                <ShapesSvg
+                  key={o.id}
+                  shapes={o.shapes}
+                  labels={o.labels}
+                  highlight={o.highlight}
+                  faded={o.faded}
+                  tag={o.timestampMs != null ? formatTimestamp(o.timestampMs, true) : undefined}
+                  tagTitle="Go to this comment's frame"
+                  tagPx={1 / (scale || 1)}
+                  onTagClick={() => onMarkerClick(o.id)}
+                  w={nw}
+                  h={nh}
+                />
+              ))}
               <ShapesSvg
                 shapes={preview ? [...draft, preview] : draft}
                 labels={[...draft, ...(preview ? [preview] : [])].map((_, i) => i + 1)}
+                faded={draftPin?.faded}
+                tag={draftPin ? formatTimestamp(draftPin.timestampMs, true) : undefined}
+                tagTitle="Your marks are pinned to this frame: go back to it"
+                tagPx={1 / (scale || 1)}
+                onTagClick={() => {
+                  const v = mediaRef.current;
+                  if (!(v instanceof HTMLVideoElement) || !draftPin) return;
+                  v.pause();
+                  v.currentTime = draftPin.timestampMs / 1000;
+                }}
                 w={nw}
                 h={nh}
               />
@@ -223,10 +261,24 @@ function VideoControls({
           className="absolute inset-x-0 top-1.5 h-2 w-full cursor-pointer accent-indigo-500"
           aria-label="Seek"
         />
+        {/* Where the selected comment's marks are drawn while scrubbing. */}
+        {markers
+          .filter((m) => m.selected)
+          .map((m) => {
+            const from = Math.max(0, m.timestampMs / 1000 - MARKS_VISIBLE_S);
+            const to = Math.min(d, m.timestampMs / 1000 + MARKS_VISIBLE_S);
+            return (
+              <div
+                key={`span-${m.id}`}
+                className="pointer-events-none absolute top-1.5 h-2 rounded-full bg-white/30"
+                style={{ left: `${(from / d) * 100}%`, width: `${(Math.max(0, to - from) / d) * 100}%` }}
+              />
+            );
+          })}
         {markers.map((m) => (
           <button
             key={m.id}
-            title={`Comment @ ${formatTimestamp(m.timestampMs)}`}
+            title={`Comment @ ${formatTimestamp(m.timestampMs, true)}`}
             onClick={() => onMarkerClick(m.id)}
             className={cx(
               "absolute -top-0.5 size-2.5 -translate-x-1/2 rounded-full border border-zinc-900",

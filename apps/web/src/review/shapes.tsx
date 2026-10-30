@@ -33,6 +33,22 @@ function anchorOf(s: Shape, w: number, h: number): [number, number] {
   }
 }
 
+/**
+ * The time tag beside a comment's first mark: above and to the right of its badge, kept inside the frame.
+ * `fs` is its font size (default: scaled to the media, as in snapshots).
+ */
+function tagBox(s: Shape, text: string, w: number, h: number, fs = strokeFor(w, h) * 4.4) {
+  const sw = strokeFor(w, h);
+  const tw = text.length * fs * 0.62 + fs;
+  const th = fs * 1.6;
+  const [ax, ay] = anchorOf(s, w, h);
+  const x = Math.max(0, Math.min(ax + sw * 4, w - tw));
+  const y = ay - sw * 4 - th >= 0 ? ay - sw * 4 - th : Math.min(ay + sw * 4, h - th);
+  return { x, y, tw, th, fs };
+}
+
+const TAG_FONT = "ui-monospace, SFMono-Regular, Menlo, monospace";
+
 /** Dark text on light colours (yellow, white), white text otherwise. */
 function labelInk(hex: string) {
   const n = parseInt(hex.slice(1), 16);
@@ -43,6 +59,7 @@ function labelInk(hex: string) {
 /**
  * `labels[i]` is the number drawn on shape i (null = no number); `highlight`
  * dims every other shape, e.g. while a single mark's comment is selected.
+ * `tag` (a video time) is drawn beside the first shape; `onTagClick` makes it a button.
  */
 export function ShapesSvg({
   shapes,
@@ -51,6 +68,10 @@ export function ShapesSvg({
   faded,
   labels,
   highlight,
+  tag,
+  tagTitle,
+  tagPx,
+  onTagClick,
 }: {
   shapes: Shape[];
   w: number;
@@ -58,64 +79,87 @@ export function ShapesSvg({
   faded?: boolean;
   labels?: (number | null)[];
   highlight?: number | null;
+  tag?: string;
+  tagTitle?: string;
+  /** One screen pixel in media pixels: keeps the tag a readable size however large the media is shown. */
+  tagPx?: number;
+  onTagClick?: () => void;
 }) {
   const sw = strokeFor(w, h);
+  const box = tag && shapes[0] ? tagBox(shapes[0], tag, w, h, tagPx ? 12 * tagPx : undefined) : null;
   return (
-    <g opacity={faded ? 0.55 : 1} style={{ filter: "drop-shadow(0 0 1px rgba(0,0,0,.8))" }}>
-      {shapes.map((s, i) => {
-        const dim = highlight != null && highlight !== i ? 0.3 : 1;
-        const label = labels?.[i];
-        const [ax, ay] = anchorOf(s, w, h);
-        let body: React.ReactNode;
-        switch (s.type) {
-          case "rect":
-            body = <rect x={s.x * w} y={s.y * h} width={s.w * w} height={s.h * h} fill="none" stroke={s.color} strokeWidth={sw} rx={sw} />;
-            break;
-          case "arrow": {
-            const [p1, p2, p3] = arrowHead(s.x1 * w, s.y1 * h, s.x2 * w, s.y2 * h, sw * 5);
-            body = (
-              <>
-                <line x1={s.x1 * w} y1={s.y1 * h} x2={s.x2 * w} y2={s.y2 * h} stroke={s.color} strokeWidth={sw} strokeLinecap="round" />
-                <polygon points={`${p1.join(",")} ${p2.join(",")} ${p3.join(",")}`} fill={s.color} />
-              </>
-            );
-            break;
+    <>
+      <g opacity={faded ? 0.55 : 1} style={{ filter: "drop-shadow(0 0 1px rgba(0,0,0,.8))" }}>
+        {shapes.map((s, i) => {
+          const dim = highlight != null && highlight !== i ? 0.3 : 1;
+          const label = labels?.[i];
+          const [ax, ay] = anchorOf(s, w, h);
+          let body: React.ReactNode;
+          switch (s.type) {
+            case "rect":
+              body = <rect x={s.x * w} y={s.y * h} width={s.w * w} height={s.h * h} fill="none" stroke={s.color} strokeWidth={sw} rx={sw} />;
+              break;
+            case "arrow": {
+              const [p1, p2, p3] = arrowHead(s.x1 * w, s.y1 * h, s.x2 * w, s.y2 * h, sw * 5);
+              body = (
+                <>
+                  <line x1={s.x1 * w} y1={s.y1 * h} x2={s.x2 * w} y2={s.y2 * h} stroke={s.color} strokeWidth={sw} strokeLinecap="round" />
+                  <polygon points={`${p1.join(",")} ${p2.join(",")} ${p3.join(",")}`} fill={s.color} />
+                </>
+              );
+              break;
+            }
+            case "pen":
+              body = (
+                <polyline
+                  points={s.points.map(([x, y]) => `${x * w},${y * h}`).join(" ")}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth={sw}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              );
+              break;
+            case "pin":
+              body = <circle cx={ax} cy={ay} r={sw * 4} fill={s.color} stroke="#000" strokeOpacity={0.4} strokeWidth={sw / 2} />;
+              break;
           }
-          case "pen":
-            body = (
-              <polyline
-                points={s.points.map(([x, y]) => `${x * w},${y * h}`).join(" ")}
-                fill="none"
-                stroke={s.color}
-                strokeWidth={sw}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            );
-            break;
-          case "pin":
-            body = <circle cx={ax} cy={ay} r={sw * 4} fill={s.color} stroke="#000" strokeOpacity={0.4} strokeWidth={sw / 2} />;
-            break;
-        }
-        return (
-          <g key={i} opacity={dim}>
-            {body}
-            {label != null && (
-              <g>
-                {s.type !== "pin" && <circle cx={ax} cy={ay} r={sw * 3.4} fill={s.color} stroke="#000" strokeOpacity={0.4} strokeWidth={sw / 2} />}
-                <text x={ax} y={ay} fontSize={sw * 4} fontWeight={700} textAnchor="middle" dominantBaseline="central" fill={labelInk(s.color)}>
-                  {label}
-                </text>
-              </g>
-            )}
-          </g>
-        );
-      })}
-    </g>
+          return (
+            <g key={i} opacity={dim}>
+              {body}
+              {label != null && (
+                <g>
+                  {s.type !== "pin" && <circle cx={ax} cy={ay} r={sw * 3.4} fill={s.color} stroke="#000" strokeOpacity={0.4} strokeWidth={sw / 2} />}
+                  <text x={ax} y={ay} fontSize={sw * 4} fontWeight={700} textAnchor="middle" dominantBaseline="central" fill={labelInk(s.color)}>
+                    {label}
+                  </text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+      </g>
+      {box && (
+        <g
+          data-time-tag
+          pointerEvents={onTagClick ? "all" : "none"}
+          className={onTagClick ? "cursor-pointer" : undefined}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={onTagClick}
+        >
+          {tagTitle && <title>{tagTitle}</title>}
+          <rect x={box.x} y={box.y} width={box.tw} height={box.th} rx={box.th / 2} fill="rgba(9,9,11,.82)" stroke={shapes[0]!.color} strokeWidth={sw / 2} />
+          <text x={box.x + box.tw / 2} y={box.y + box.th / 2} fontSize={box.fs} fontFamily={TAG_FONT} textAnchor="middle" dominantBaseline="central" fill="#fff">
+            {tag}
+          </text>
+        </g>
+      )}
+    </>
   );
 }
 
-export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], w: number, h: number, labels?: (number | null)[]) {
+export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], w: number, h: number, labels?: (number | null)[], tag?: string) {
   const sw = strokeFor(w, h);
   ctx.lineWidth = sw;
   ctx.lineCap = "round";
@@ -169,13 +213,31 @@ export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], w: nu
     ctx.fillText(String(label), ax, ay);
     ctx.restore();
   });
+  if (!tag || !shapes[0]) return;
+  const box = tagBox(shapes[0], tag, w, h);
+  ctx.save();
+  ctx.shadowBlur = 0;
+  ctx.beginPath();
+  ctx.roundRect(box.x, box.y, box.tw, box.th, box.th / 2);
+  ctx.fillStyle = "rgba(9,9,11,.82)";
+  ctx.fill();
+  ctx.lineWidth = sw / 2;
+  ctx.strokeStyle = shapes[0].color;
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = `${box.fs}px ${TAG_FONT}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(tag, box.x + box.tw / 2, box.y + box.th / 2);
+  ctx.restore();
 }
 
-/** Renders the current frame (or image) plus shapes to a JPEG, capped at 1920px wide. */
+/** Renders the current frame (or image) plus shapes (and the video time `tag`) to a JPEG, capped at 1920px wide. */
 export async function renderSnapshot(
   el: HTMLVideoElement | HTMLImageElement,
   shapes: Shape[],
   labels?: (number | null)[],
+  tag?: string,
 ): Promise<Blob | null> {
   const nw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth;
   const nh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
@@ -189,7 +251,7 @@ export async function renderSnapshot(
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   ctx.drawImage(el, 0, 0, w, h);
-  drawShapes(ctx, shapes, w, h, labels);
+  drawShapes(ctx, shapes, w, h, labels, tag);
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/jpeg", 0.88));
 }
 
