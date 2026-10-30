@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ReviewCommentInfo, ReviewDetail, TaskDetail } from "@rev/shared";
+import { frameTimes, type ReviewCommentInfo, type ReviewDetail, type TaskDetail } from "@rev/shared";
 import { Client, makeFixtures, startTestServer, type TestServer } from "./helpers";
 
 let server: TestServer;
@@ -181,5 +183,74 @@ describe("review rounds", () => {
     expect((await aliceBot.upload("/api/reviews/WEB-R1/assets?round=3", fixtures.png, "image/png")).status).toBe(403);
     const after = (await bobBot.del("/api/reviews/WEB-R1/rounds/3")).json as ReviewDetail;
     expect(after.rounds.map((r) => r.number)).toEqual([1, 2]);
+  });
+});
+
+describe("context for video comments", () => {
+  let videoId: string;
+  let overall: ReviewCommentInfo & { marks: ReviewCommentInfo[] };
+
+  it("spans a second either side of the moment, shifted to stay inside the video", () => {
+    expect(frameTimes(5000, 60000)).toEqual({ timesMs: [4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000], markedIndex: 4 });
+    expect(frameTimes(0, 60000)).toEqual({ timesMs: [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000], markedIndex: 0 });
+    expect(frameTimes(59990, 60000)).toMatchObject({ markedIndex: 8, timesMs: expect.arrayContaining([57960, 59960]) });
+    // Short clips get closer frames rather than fewer.
+    const short = frameTimes(1000, 2000);
+    expect(short.timesMs).toHaveLength(9);
+    expect(short.timesMs[short.markedIndex]).toBe(1000);
+    expect(Math.max(...short.timesMs)).toBeLessThanOrEqual(1960);
+  });
+
+  it("attaches frames around the moment to a video comment and its marks", async () => {
+    await aliceBot.post("/api/projects/WEB/reviews", { title: "Combo animation" });
+    videoId = (await aliceBot.upload("/api/reviews/WEB-R2/assets", fixtures.mp4, "video/mp4")).json.id;
+    await server.ctx.processor.idle();
+    await aliceBot.patch("/api/reviews/WEB-R2", { status: "open" });
+    overall = (
+      await alice.post("/api/reviews/WEB-R2/comments", {
+        body: "Second punch looks wrong",
+        assetId: videoId,
+        timestampMs: 1000,
+        annotation: { shapes: shapes.slice(0, 2) },
+        marks: [
+          { index: 0, body: "Fist clips the shoulder" },
+          { index: 1, body: "Hit spark is late" },
+        ],
+      })
+    ).json;
+    expect(overall.frames).toMatchObject({ url: `/api/media/frames/${overall.id}`, markedIndex: 4 });
+    expect(overall.frames!.timesMs[4]).toBe(1000);
+    expect(overall.marks.map((m) => m.frames?.url)).toEqual([overall.frames!.url, overall.frames!.url]);
+
+    const res = await bob.get(overall.frames!.url);
+    expect(res.status).toBe(200);
+    expect(res.res.headers["content-type"]).toBe("image/jpeg");
+    // A 3×3 grid of frames up to 480×360 each, in the video's shape (4:3 here), cached next to the video.
+    const sheet = path.join(server.dataDir, "media", "assets", videoId, "frames-1000.jpg");
+    const dims = execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", sheet], { encoding: "utf8" });
+    expect(dims.trim()).toBe("1428,1080");
+    expect((await aliceBot.get(overall.marks[1]!.frames!.url)).status).toBe(200);
+  });
+
+  it("gives image comments and text-only comments no frames", async () => {
+    const image = (await bob.post("/api/reviews/WEB-R1/comments", { body: "Image", assetId, annotation: { shapes } })).json;
+    expect(image.frames).toBeNull();
+    expect((await bob.get(`/api/media/frames/${image.id}`)).status).toBe(404);
+    const general = (await bob.post("/api/reviews/WEB-R2/comments", { body: "General" })).json;
+    expect(general.frames).toBeNull();
+  });
+
+  it("sends the mark notes along when the overall comment becomes a task", async () => {
+    await alice.patch(`/api/comments/${overall.marks[1]!.id}`, { status: "rejected" });
+    const task = (await alice.post("/api/reviews/WEB-R2/tasks", { title: "Fix the punch", commentIds: [overall.id], assigneeId: aliceBotId }))
+      .json as TaskDetail;
+    expect(task.sourceComments.map((c) => c.id)).toEqual([overall.id]);
+    expect(task.sourceMarks.map((m) => [m.markOf, m.markIndex, m.body, m.status])).toEqual([
+      [overall.id, 1, "Fist clips the shoulder", "open"],
+      [overall.id, 2, "Hit spark is late", "rejected"],
+    ]);
+    const shown = (await aliceBot.get(`/api/tasks/${task.ref}`)).json as TaskDetail;
+    expect(shown.sourceMarks).toHaveLength(2);
+    expect(shown.sourceComments[0]!.frames?.timesMs).toHaveLength(9);
   });
 });

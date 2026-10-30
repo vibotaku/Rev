@@ -48,4 +48,18 @@ export default async function mediaRoutes(app: FastifyInstance, ctx: AppContext)
     await assertRoundVisible(ctx.db, comment.roundId, actor, perms);
     return send(reply, comment.snapshotKey);
   });
+
+  /** Frames around a video comment's moment, rendered on first request (see `frameTimes`). */
+  app.get<{ Params: { id: string } }>("/api/media/frames/:id", async (req, reply) => {
+    const actor = requireActor(req);
+    const [comment] = await ctx.db.select().from(reviewComments).where(eq(reviewComments.id, req.params.id));
+    if (!comment?.assetId || comment.timestampMs == null) throw notFound("Frames");
+    const { perms } = await resolveReview(ctx.db, actor, comment.reviewId);
+    await assertRoundVisible(ctx.db, comment.roundId, actor, perms);
+    const [asset] = await ctx.db.select().from(reviewAssets).where(eq(reviewAssets.id, comment.assetId));
+    if (asset?.kind !== "video" || asset.status !== "ready") throw notFound("Frames");
+    const key = await ctx.processor.frameSheet(asset, comment.timestampMs);
+    if (!key) throw notFound("Frames");
+    return send(reply, key);
+  });
 }

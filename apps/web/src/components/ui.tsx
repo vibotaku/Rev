@@ -1,4 +1,4 @@
-import { useEffect, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useEffect, useEffectEvent, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, Loader2, UserCheck, X } from "lucide-react";
@@ -131,19 +131,23 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
-  wide?: boolean;
+  /** `true`: a roomy form; `"xl"`: room for large images. */
+  wide?: boolean | "xl";
 }) {
+  // Registered once: re-adding it on every render can drop the very Escape press that
+  // made another handler re-render the page.
+  const close = useEffectEvent(onClose);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-zinc-900/40 p-4 pt-[10vh]" onMouseDown={onClose}>
       <div
         role="dialog"
         aria-label={title}
-        className={cx("w-full rounded-lg bg-white shadow-xl", wide ? "max-w-2xl" : "max-w-md")}
+        className={cx("w-full rounded-lg bg-white shadow-xl", wide === "xl" ? "max-w-5xl" : wide ? "max-w-2xl" : "max-w-md")}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3">

@@ -519,7 +519,8 @@ export interface TaskActivityInfo {
 export interface TaskDetail extends TaskInfo {
   /** Review comments this task was created from, with their annotations. */
   sourceComments: ReviewCommentInfo[];
-  /** Reviews submitted to deliver this task. */
+  /** Notes on single marks of the source comments that are not sources themselves (nest them by `markOf`). */
+  sourceMarks: ReviewCommentInfo[];
   /** Reviews (or later rounds of the source review) submitted to deliver this task. */
   deliveries: { id: string; ref: string; title: string; status: ReviewStatus; createdAt: string; round: number | null }[];
   activity: TaskActivityInfo[];
@@ -569,12 +570,25 @@ export interface ReviewCommentInfo {
   timestampMs: number | null;
   annotation: Annotation | null;
   snapshotUrl: string | null;
+  /** Video comments only: frames around the commented moment (see `frameTimes`). */
+  frames: CommentFrames | null;
   status: CommentStatus;
   decidedBy: UserSummary | null;
   decidedAt: string | null;
   task: { id: string; ref: string; status: TaskStatus; closureReview: ClosureReview | null } | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * A contact sheet of video frames around a comment's moment: a 3×3 grid read row by row,
+ * one frame per entry of `timesMs`. The commented moment is `timesMs[markedIndex]` and is
+ * outlined in red; marks are not drawn on these frames (the snapshot has them).
+ */
+export interface CommentFrames {
+  url: string;
+  timesMs: number[];
+  markedIndex: number;
 }
 
 export interface ReviewInfo {
@@ -658,9 +672,28 @@ export function reviewRef(projectKey: string, number: number) {
   return `${projectKey}-R${number}`;
 }
 
-export function formatTimestamp(ms: number) {
+export const FRAME_SHEET = { cols: 3, rows: 3, stepMs: 250 } as const;
+
+/**
+ * The moments shown on a comment's frame sheet: up to a second either side of
+ * `atMs`, every 250 ms (closer together for clips under ~2 s), shifted to stay
+ * inside the video. `markedIndex` is the position of `atMs` itself.
+ */
+export function frameTimes(atMs: number, durationMs: number | null) {
+  const count = FRAME_SHEET.cols * FRAME_SHEET.rows;
+  const last = durationMs ? Math.max(0, durationMs - 40) : Infinity;
+  const step = Number.isFinite(last) ? Math.max(1, Math.min(FRAME_SHEET.stepMs, Math.floor(last / (count - 1)))) : FRAME_SHEET.stepMs;
+  const at = Math.min(Math.max(0, atMs), last);
+  const after = Math.max(0, Math.min(Math.floor((count - 1) / 2), Math.floor((last - at) / step)));
+  const before = Math.min(count - 1 - after, Math.floor(at / step));
+  const timesMs = Array.from({ length: count }, (_, i) => Math.min(last, Math.round(at + (i - before) * step)));
+  return { timesMs, markedIndex: before };
+}
+
+/** "0:03.4"; with `exact`, "0:03.400". */
+export function formatTimestamp(ms: number, exact = false) {
   const total = ms / 1000;
   const m = Math.floor(total / 60);
   const s = total - m * 60;
-  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+  return exact ? `${m}:${s.toFixed(3).padStart(6, "0")}` : `${m}:${s.toFixed(1).padStart(4, "0")}`;
 }

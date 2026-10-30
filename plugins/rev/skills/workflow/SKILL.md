@@ -13,8 +13,9 @@ Use the **Rev MCP tools** from this plugin. If they are unavailable, use the bun
 ## The loop
 
 1. **Pull work.** Call `list_my_tasks`, then `get_task` with the task ref (`WEB-12`).
-   - A task created from review feedback includes each source comment, with its video timestamp, a text description of the marks (box, arrow, pin, freehand, as percentages of the frame), and an **annotated snapshot image** of the exact frame. Read every one; each is a requirement.
-   - Reviewers can attach a note to a single mark. Such feedback shows as `mark #2 of comment …`: the number matches the mark drawn on the frame, and its snapshot shows just that mark.
+   - A task created from review feedback includes each source comment, with its exact video time (`@ 0:03.400`), a text description of the marks (box, arrow, pin, freehand, as percentages of the frame), and an **annotated snapshot image** of the exact frame. Read every one; each is a requirement.
+   - Reviewers can attach a note to each mark. The notes are listed under their comment as `#1 [accepted] …`, and the number matches the mark drawn on the snapshot. Leave `[rejected]` notes alone. A task made from a single mark shows `mark #2 of comment …`, and its snapshot shows just that mark.
+   - Video comments also come with a **frame sheet**: 9 frames in a 3×3 grid, read row by row, from 1 s before to 1 s after the commented moment, which is outlined in red. Use it for motion and timing problems ("hit spark is late", "clips through the shoulder").
    - CLI: `rev tasks`, `rev task show WEB-12 --save-snapshots ./rev-feedback`.
 2. **Start.** Call `update_task_status` with `in_progress` (CLI: `rev task start WEB-12`).
 3. **Do the work.** Use `comment_on_task` for progress notes or questions to the humans.

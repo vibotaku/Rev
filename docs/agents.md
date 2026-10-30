@@ -72,7 +72,7 @@ A human creates the agent under **My agents → New agent (manual)**, copies its
 
 ```bash
 rev tasks                                   # what's assigned to me
-rev task show WEB-12 --save-snapshots ./fb  # description, review feedback, annotated frames
+rev task show WEB-12 --save-snapshots ./fb  # description, review feedback, annotated frames, video frame sheets
 rev task start WEB-12                       # → in_progress
 # … do the work, record a video / take screenshots …
 # WEB-12 came from review WEB-R3, so deliver the fix as the next round of WEB-R3:
@@ -92,6 +92,8 @@ rev review create -p WEB -t "Fix CTA overlap" --task WEB-12 --caption-each demo.
   - Comments belong to the round they were made on.
   - Only one draft round can exist at a time. If a submission fails part-way, the CLI/MCP delete the draft so you can retry.
 - **Mark notes.** Besides the overall comment on a frame, reviewers can attach a note to each mark (pin, box, arrow, drawing). Each note is its own comment: `#2 [accepted] Logo is blurry` in `rev review show`, or `mark #2 of comment …` in a task. It has its own snapshot of just that mark.
+  - A task made from the overall comment lists its mark notes underneath, with their status. Leave the rejected ones alone.
+- **Video feedback.** A comment on a video carries the exact time (`@ 0:03.400`), the annotated snapshot of that frame, and a **frame sheet**: 9 frames in a 3×3 grid, read row by row, from 1 s before to 1 s after, with the commented frame outlined in red. Use it to judge motion and timing ("the hit spark is late"). The text output lists each frame's time.
 - **Decisions.** The review owner accepts or rejects every comment and every mark note separately. Only accepted ones become tasks.
 
 The review's owner (your linked human) then approves it and closes the task, or accepts more comments, which come back to you as new tasks. For small, self-verifiable work you can close the task yourself with `rev task done WEB-12 --note "…"`; it then appears to humans as agent-closed until someone reviews it.
@@ -104,7 +106,7 @@ The review's owner (your linked human) then approves it and closes the task, or 
 | `rev login --url <url> --token <token>` | Verify and save a manually created token |
 | `rev whoami`, `rev projects` | Identity and project memberships |
 | `rev tasks [--all-statuses]` | Your open tasks (all statuses with the flag) |
-| `rev task show <ref> [--save-snapshots <dir>]` | Task with source comments, timestamps, a text description of each annotation, and snapshot downloads |
+| `rev task show <ref> [--save-snapshots <dir>]` | Task with source comments and their mark notes, exact timestamps, a text description of each annotation, and snapshot and frame-sheet downloads |
 | `rev task start <ref>` | Move to `in_progress` |
 | `rev task status <ref> <todo\|in_progress\|in_review\|done\|cancelled>` | Set status. Closing marks the task agent-closed. |
 | `rev task done <ref> [--note <text>]` | Close it yourself, with a note on what was done and how it was verified |
@@ -129,7 +131,7 @@ The Claude Code plugin registers this server automatically. Without the plugin, 
 | --- | --- |
 | `whoami`, `list_projects` | Identity and projects |
 | `list_my_tasks` | Assigned tasks |
-| `get_task` | Task details plus annotated snapshot **images** of the feedback (up to 4) |
+| `get_task` | Task details plus **images** of the feedback: annotated snapshots and, for video, frame sheets (up to 6) |
 | `update_task_status` | Any status, with an optional note. `done` and `cancelled` are recorded as agent-closed. |
 | `comment_on_task` | Progress notes and questions |
 | `create_review` | Start a new review from local files, optionally linked to a task, published by default |
@@ -146,7 +148,7 @@ Everything the CLI does is plain HTTP with `Authorization: Bearer rev_…`:
 | `POST /api/agents/register` `{"key","name","description"}` (no auth) | Self-register; returns `{ token, agent, projects }` |
 | `GET /api/auth/me` | Who am I |
 | `GET /api/tasks?status=todo,in_progress` | My tasks |
-| `GET /api/tasks/WEB-12` | Task detail, including `sourceComments[].annotation` / `snapshotUrl`, and `closure { by, at, review: "agent" \| "human", reviewedBy }` |
+| `GET /api/tasks/WEB-12` | Task detail, including `sourceComments[].annotation` / `snapshotUrl` / `frames { url, timesMs, markedIndex }`, `sourceMarks` (notes on the marks of those comments), and `closure { by, at, review: "agent" \| "human", reviewedBy }` |
 | `PATCH /api/tasks/WEB-12` `{"status":"in_progress"}` | Status |
 | `POST /api/tasks/WEB-12/comments` `{"body":"…"}` | Comment |
 | `POST /api/projects/WEB/reviews` `{"title","description","taskRef"}` | Create a draft review |
@@ -157,6 +159,6 @@ Everything the CLI does is plain HTTP with `Authorization: Bearer rev_…`:
 | `POST /api/reviews/WEB-R7/rounds` `{"notes","taskRefs"}` | Start the next round as a draft |
 | `POST /api/reviews/WEB-R7/assets?round=2` | Upload into that round |
 | `POST /api/reviews/WEB-R7/rounds/2/submit` | Submit it (needs at least one asset); `DELETE …/rounds/2` discards a draft |
-| `GET /api/media/assets/<id>[?download=1]`, `GET /api/media/snapshots/<commentId>` | Media |
+| `GET /api/media/assets/<id>[?download=1]`, `GET /api/media/snapshots/<commentId>`, `GET /api/media/frames/<commentId>` | Media, snapshots and video frame sheets (rendered on first request) |
 
 Annotation coordinates are normalised to `0..1` of the media's width and height. Shapes are `pin {x,y}`, `rect {x,y,w,h}`, `arrow {x1,y1,x2,y2}`, and `pen {points:[[x,y],…]}`.

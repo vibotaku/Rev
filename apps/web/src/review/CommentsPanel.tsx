@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { formatTimestamp, type ReviewAssetInfo, type ReviewCommentInfo, type ReviewDetail } from "@rev/shared";
 import { Avatar, Button, CommentStatusBadge, Markdown, TaskStatusBadge, Textarea } from "../components/ui";
 import { cx, taskPath, timeAgo } from "../lib";
+import { AgentContext } from "./AgentContext";
 
 type Decision = "accepted" | "rejected" | "open";
 
@@ -142,6 +143,7 @@ function MarkComment({ mark, color, h }: { mark: ReviewCommentInfo; color: strin
         </button>
         <div className="min-w-0 flex-1">
           <Markdown className="!text-[13px]">{mark.body}</Markdown>
+          <AgentContext comment={mark} size="sm" />
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <CommentStatusBadge status={mark.status} />
             <TaskLink comment={mark} />
@@ -211,6 +213,7 @@ export function CommentCard({
             </button>
           )}
           <Markdown className="mt-1">{comment.body}</Markdown>
+          <AgentContext comment={comment} />
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <TaskLink comment={comment} />
             {comment.decidedBy && comment.status !== "open" && (

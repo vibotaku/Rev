@@ -1,6 +1,7 @@
 // Row -> DTO conversion. List serializers batch their lookups to avoid N+1 queries.
-import { asc, count, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import {
+  frameTimes,
   reviewRef,
   taskRef,
   type ReviewAssetInfo,
@@ -222,7 +223,8 @@ export async function serializeComments(db: Db, rows: CommentRow[]): Promise<Rev
   if (!rows.length) return [];
   const reviewIds = unique(rows.map((c) => c.reviewId));
   const taskIds = unique(rows.map((c) => c.taskId));
-  const [userMap, reviewRows, taskRows, rounds] = await Promise.all([
+  const assetIds = unique(rows.map((c) => (c.timestampMs != null ? c.assetId : null)));
+  const [userMap, reviewRows, taskRows, rounds, videoRows] = await Promise.all([
     loadUsers(db, rows.flatMap((c) => [c.authorId, c.decidedBy])),
     db
       .select({ id: reviews.id, number: reviews.number, key: projects.key })
@@ -243,7 +245,14 @@ export async function serializeComments(db: Db, rows: CommentRow[]): Promise<Rev
           .where(inArray(tasks.id, taskIds))
       : Promise.resolve([]),
     roundNumbers(db, rows.map((c) => c.roundId)),
+    assetIds.length
+      ? db
+          .select({ id: reviewAssets.id, durationMs: reviewAssets.durationMs })
+          .from(reviewAssets)
+          .where(and(inArray(reviewAssets.id, assetIds), eq(reviewAssets.kind, "video")))
+      : Promise.resolve([]),
   ]);
+  const videos = new Map(videoRows.map((a) => [a.id, a]));
   const refBy = new Map(reviewRows.map((r) => [r.id, reviewRef(r.key, r.number)]));
   const taskBy = new Map(
     taskRows.map((t) => [t.id, { id: t.id, ref: taskRef(t.key, t.number), status: t.status, closureReview: closureReviewOf(t) }]),
@@ -262,6 +271,11 @@ export async function serializeComments(db: Db, rows: CommentRow[]): Promise<Rev
     timestampMs: c.timestampMs,
     annotation: c.annotation ?? null,
     snapshotUrl: c.snapshotKey ? `/api/media/snapshots/${c.id}` : null,
+    // A mark shares its overall comment's moment, so both point at the same sheet.
+    frames:
+      c.assetId && c.timestampMs != null && videos.has(c.assetId)
+        ? { url: `/api/media/frames/${c.markOf ?? c.id}`, ...frameTimes(c.timestampMs, videos.get(c.assetId)!.durationMs) }
+        : null,
     status: c.status,
     decidedBy: c.decidedBy ? (userMap.get(c.decidedBy) ?? unknownUser(c.decidedBy)) : null,
     decidedAt: iso(c.decidedAt),

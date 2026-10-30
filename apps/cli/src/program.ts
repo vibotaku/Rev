@@ -6,7 +6,7 @@ import { TASK_STATUS_LABELS, TASK_STATUSES, type TaskStatus } from "@rev/shared"
 import { RevApi } from "./api";
 import { configPath, loadConfig, saveConfig } from "./config";
 import { formatReview, formatTask, formatTaskLine } from "./format";
-import { assetNamesFor, createReviewKit, submitReviewRound } from "./kit";
+import { assetNamesFor, createReviewKit, fetchSnapshots, submitReviewRound } from "./kit";
 import { runMcpServer } from "./mcp";
 import { VERSION } from "./version";
 
@@ -244,18 +244,17 @@ export function buildProgram(io: Io = defaultIo) {
     .command("show")
     .description("Show a task with the review feedback it came from")
     .argument("<ref>", "task reference, e.g. WEB-12")
-    .option("--save-snapshots <dir>", "download annotated snapshots into this directory")
+    .option("--save-snapshots <dir>", "download annotated snapshots (and frames around video comments) into this directory")
     .action(async (ref: string, opts: { saveSnapshots?: string }, cmd: Command) => {
       const client = await api();
       const t = await client.task(ref);
       const saved: string[] = [];
       if (opts.saveSnapshots) {
         await mkdir(opts.saveSnapshots, { recursive: true });
-        for (const c of t.sourceComments) {
-          if (!c.snapshotUrl) continue;
-          const { data, mime } = await client.download(c.snapshotUrl);
-          const file = path.join(opts.saveSnapshots, `${t.ref}-${c.id}${mime === "image/jpeg" ? ".jpg" : ".png"}`);
-          await writeFile(file, data);
+        for (const s of await fetchSnapshots(client, t.sourceComments, Infinity, Infinity)) {
+          const id = s.kind === "frames" ? `${s.comment.markOf ?? s.comment.id}-frames` : s.comment.id;
+          const file = path.join(opts.saveSnapshots, `${t.ref}-${id}${s.mime === "image/jpeg" ? ".jpg" : ".png"}`);
+          await writeFile(file, s.data);
           saved.push(file);
         }
       }

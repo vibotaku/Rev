@@ -5,15 +5,17 @@ import { z } from "zod";
 import { TASK_STATUS_LABELS, TASK_STATUSES } from "@rev/shared";
 import type { RevApi } from "./api";
 import { formatReview, formatTask, formatTaskLine } from "./format";
-import { assetNamesFor, createReviewKit, fetchSnapshots, submitReviewRound } from "./kit";
+import { assetNamesFor, createReviewKit, fetchSnapshots, snapshotCaption, submitReviewRound } from "./kit";
 import { VERSION } from "./version";
 
 export const INSTRUCTIONS = `Rev is the team's task and review tracker. You act as an agent account linked to a human owner.
 
 Workflow:
 1. Pull work: call list_my_tasks, then get_task for details. Tasks created from review feedback include the
-   reviewers' comments, video timestamps, annotation descriptions and annotated snapshot images; address every one.
-   A comment can carry notes on individual marks ("mark #2 of comment …"): each mark is its own piece of feedback.
+   reviewers' comments, exact video timestamps, annotation descriptions, annotated snapshot images and, for video,
+   a 3×3 sheet of frames around the commented moment (to judge motion and timing); address every one.
+   A comment can carry notes on individual marks (#1, #2, … matching the numbers on the snapshot): each mark is
+   its own piece of feedback. Leave alone mark notes the review owner rejected.
 2. Call update_task_status with "in_progress" when you start.
 3. When done, deliver evidence: screenshots (png/jpg/webp/gif) and screen recordings (mp4/webm/mov/mkv) given as
    local file paths, plus notes on what changed and how to verify it.
@@ -98,10 +100,10 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
     "get_task",
     {
       description:
-        "Get a task's full details: description, the review comments it came from (with timestamps and annotation descriptions), and the annotated snapshot images.",
+        "Get a task's full details: description, the review comments it came from (with mark notes, exact timestamps and annotation descriptions), the annotated snapshot images and, for video comments, a sheet of frames around the moment.",
       inputSchema: {
         ref: z.string().describe('Task reference such as "WEB-12"'),
-        include_snapshots: z.boolean().default(true).describe("Attach annotated snapshot images (max 4)"),
+        include_snapshots: z.boolean().default(true).describe("Attach annotated snapshots and video frame sheets (max 6 images)"),
       },
       annotations: readOnly,
     },
@@ -113,7 +115,7 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
         const content: Content[] = [{ type: "text", text: formatTask(api, task, names) }];
         if (include_snapshots) {
           for (const s of await fetchSnapshots(api, task.sourceComments)) {
-            content.push({ type: "text", text: `Snapshot for comment ${s.comment.id}:` });
+            content.push({ type: "text", text: snapshotCaption(s) });
             content.push({ type: "image", data: s.data.toString("base64"), mimeType: s.mime });
           }
         }
@@ -229,7 +231,7 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
         "Read a review round by round: notes, assets, comments with their status (open/accepted/rejected/resolved), mark notes (#n), replies, timestamps and annotations.",
       inputSchema: {
         ref: z.string().describe('Review reference such as "WEB-R3"'),
-        include_snapshots: z.boolean().default(false).describe("Attach annotated snapshot images (max 4)"),
+        include_snapshots: z.boolean().default(false).describe("Attach annotated snapshots and video frame sheets (max 6 images)"),
       },
       annotations: readOnly,
     },
@@ -241,7 +243,7 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
         if (include_snapshots) {
           const open = review.comments.filter((c) => !c.parentId && (c.status === "open" || c.status === "accepted"));
           for (const s of await fetchSnapshots(api, open)) {
-            content.push({ type: "text", text: `Snapshot for comment ${s.comment.id}:` });
+            content.push({ type: "text", text: snapshotCaption(s) });
             content.push({ type: "image", data: s.data.toString("base64"), mimeType: s.mime });
           }
         }

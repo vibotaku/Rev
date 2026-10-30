@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { MEDIA_EXTENSIONS, type ReviewCommentInfo, type ReviewDetail, type ReviewRoundInfo } from "@rev/shared";
 import type { RevApi } from "./api";
+import { describeFrames } from "./format";
 
 export interface ReviewKitInput {
   project: string;
@@ -86,22 +87,36 @@ export async function submitReviewRound(
 
 export interface Snapshot {
   comment: ReviewCommentInfo;
+  /** "snapshot": the frame with the marks drawn on it; "frames": the sheet of frames around a video comment's moment. */
+  kind: "snapshot" | "frames";
   data: Buffer;
   mime: string;
 }
 
-/** Downloads annotated comment snapshots, stopping at the given count / byte budget. */
-export async function fetchSnapshots(api: RevApi, comments: ReviewCommentInfo[], maxImages = 4, maxBytes = 5 * 1024 * 1024) {
+/** Downloads comment snapshots and video frame sheets (each sheet once), stopping at the given count / byte budget. */
+export async function fetchSnapshots(api: RevApi, comments: ReviewCommentInfo[], maxImages = 6, maxBytes = 8 * 1024 * 1024) {
   const out: Snapshot[] = [];
+  const seen = new Set<string>();
   let bytes = 0;
   for (const c of comments) {
-    if (!c.snapshotUrl || out.length >= maxImages) continue;
-    const { data, mime } = await api.download(c.snapshotUrl);
-    if (bytes + data.length > maxBytes) continue;
-    bytes += data.length;
-    out.push({ comment: c, data, mime });
+    for (const [kind, url] of [["snapshot", c.snapshotUrl], ["frames", c.frames?.url]] as const) {
+      if (!url || seen.has(url) || out.length >= maxImages) continue;
+      seen.add(url);
+      const got = await api.download(url).catch(() => null);
+      if (!got || bytes + got.data.length > maxBytes) continue;
+      bytes += got.data.length;
+      out.push({ comment: c, kind, data: got.data, mime: got.mime });
+    }
   }
   return out;
+}
+
+/** The text placed before each image an MCP tool returns. */
+export function snapshotCaption(s: Snapshot) {
+  const c = s.comment;
+  if (s.kind === "frames") return `Frames around comment ${c.markOf ?? c.id}: ${describeFrames(c.frames!)}. Marks are not drawn on these.`;
+  const mark = c.markIndex != null ? ` (mark #${c.markIndex} only)` : "";
+  return `Snapshot for comment ${c.id}${mark}, with the reviewer's marks drawn and numbered:`;
 }
 
 /** Map of asset id -> filename for a review, used to label comments. */

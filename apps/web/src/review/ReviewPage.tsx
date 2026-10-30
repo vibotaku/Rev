@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowUpRight,
+  Bot,
   Circle,
+  Clock,
   Eraser,
   Film,
   Image as ImageIcon,
@@ -49,6 +51,20 @@ function isTyping(e: KeyboardEvent) {
   return t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName);
 }
 
+/** Seeks a video and resolves once the new frame can be drawn (or after 3 s). */
+function seekTo(v: HTMLVideoElement, seconds: number) {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      v.removeEventListener("seeked", done);
+      resolve();
+    };
+    const timer = setTimeout(done, 3000);
+    v.addEventListener("seeked", done);
+    v.currentTime = seconds;
+  });
+}
+
 export function ReviewPage() {
   const { key, number } = useParams();
   const ref = `${key}-R${number}`;
@@ -74,10 +90,17 @@ export function ReviewPage() {
   const [body, setBody] = useState("");
   const [creatingRound, setCreatingRound] = useState(false);
   const markInputs = useRef<(HTMLInputElement | null)[]>([]);
+  /** Video time (s) at which the first draft mark was drawn: the comment is pinned to that frame. */
+  const [draftAt, setDraftAt] = useState<number | null>(null);
   const setDraft = useCallback((shapes: Shape[]) => {
     setDraftShapes(shapes);
     setMarkNotes((notes) => shapes.map((_, i) => notes[i] ?? ""));
+    const media = mediaRef.current;
+    setDraftAt((at) => (shapes.length && media instanceof HTMLVideoElement ? (at ?? media.currentTime) : null));
   }, []);
+  useEffect(() => {
+    if (!draft.length) setDraftAt(null);
+  }, [draft.length]);
   const [attachTime, setAttachTime] = useState(true);
   const [time, setTime] = useState(0);
   const [scope, setScope] = useState<"asset" | "all">("asset");
@@ -163,12 +186,26 @@ export function ReviewPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
+  // What the comment will carry for the agent, spelled out in the composer.
+  const withTime = asset?.kind === "video" && (attachTime || draft.length > 0);
+  const pinnedAt = draft.length && draftAt != null ? draftAt : time;
+  const moved = draft.length > 0 && draftAt != null && Math.abs(time - draftAt) > 0.05;
+  const agentGets = [
+    withTime && "the exact time",
+    draft.length > 0 && (draft.length > 1 ? "each mark's position and note" : "the mark's position and note"),
+    (withTime || draft.length > 0) && `a snapshot of this frame${draft.length ? " with the marks drawn" : ""}`,
+    withTime && "the frames from 1 s before to 1 s after (to judge motion)",
+  ].filter((x): x is string => !!x);
+
   const postComment = useMutation({
     mutationFn: async () => {
       const media = mediaRef.current;
       const isVideo = asset?.kind === "video" && media instanceof HTMLVideoElement;
       if (isVideo && !media.paused) media.pause();
-      const timestampMs = isVideo && (attachTime || draft.length) ? Math.round(media.currentTime * 1000) : null;
+      // Marks belong to the frame they were drawn on, even if the video moved since.
+      const at = !isVideo ? null : draft.length ? (draftAt ?? media.currentTime) : attachTime ? media.currentTime : null;
+      if (isVideo && at != null && Math.abs(media.currentTime - at) > 0.001) await seekTo(media, at);
+      const timestampMs = at != null ? Math.round(at * 1000) : null;
       const created = await api.post<ReviewCommentInfo & { marks: ReviewCommentInfo[] }>(`/api/reviews/${review!.id}/comments`, {
         body,
         assetId: asset?.id ?? null,
@@ -706,12 +743,29 @@ export function ReviewPage() {
                   <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600">general comment</span>
                 )}
                 {asset?.kind === "video" && (
-                  <label className="flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600">
-                    <input type="checkbox" checked={attachTime || draft.length > 0} disabled={draft.length > 0} onChange={(e) => setAttachTime(e.target.checked)} />@{" "}
-                    <span className="font-mono">{formatTimestamp(time * 1000)}</span>
+                  <label
+                    className="flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-700"
+                    title={draft.length ? "Pinned to the frame you drew the first mark on" : "Pin this comment to the current moment of the video"}
+                  >
+                    <input type="checkbox" checked={withTime} disabled={draft.length > 0} onChange={(e) => setAttachTime(e.target.checked)} />
+                    <Clock className="size-3" /> at <span className="font-mono font-medium">{formatTimestamp(pinnedAt * 1000, true)}</span>
                   </label>
                 )}
+                {moved && (
+                  <button
+                    className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-800 hover:bg-amber-100"
+                    onClick={() => mediaRef.current instanceof HTMLVideoElement && seekTo(mediaRef.current, draftAt!)}
+                  >
+                    Your marks are on {formatTimestamp(draftAt! * 1000)} · jump back
+                  </button>
+                )}
               </div>
+              {agentGets.length > 0 && (
+                <p className="text-[11px] leading-snug text-zinc-500">
+                  <Bot className="mr-1 inline size-3 align-[-2px]" />
+                  The agent gets {agentGets.join(", ").replace(/, ([^,]*)$/, " and $1")}.
+                </p>
+              )}
               {draft.length > 0 && (
                 <div className="space-y-1.5">
                   <div className="text-xs font-medium text-zinc-600">Notes on each mark (optional, decided separately)</div>

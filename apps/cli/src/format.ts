@@ -57,18 +57,29 @@ export function formatTaskLine(t: TaskInfo) {
 function commentHeader(c: ReviewCommentInfo, assetNames: Map<string, string>) {
   return [
     c.assetId ? (assetNames.get(c.assetId) ?? "asset") : null,
-    c.timestampMs != null ? `@ ${formatTimestamp(c.timestampMs)}` : null,
+    c.timestampMs != null ? `@ ${formatTimestamp(c.timestampMs, true)}` : null,
   ]
     .filter(Boolean)
     .join(" ");
 }
 
-/** Lines shared by overall comments and mark comments: annotation, snapshot, task. */
-function commentDetails(api: RevApi, c: ReviewCommentInfo, indent: string) {
+/** "9 frames (3×3, row by row) from 0:02.400 to 0:04.400, 0.25 s apart; the commented moment 0:03.400 is frame 5, outlined in red". */
+export function describeFrames(f: NonNullable<ReviewCommentInfo["frames"]>) {
+  const t = f.timesMs;
+  const step = t.length > 1 ? `, ${Number(((t[1]! - t[0]!) / 1000).toFixed(3))} s apart` : "";
+  return (
+    `${t.length} frames (3×3, row by row) from ${formatTimestamp(t[0]!, true)} to ${formatTimestamp(t.at(-1)!, true)}${step}; ` +
+    `the commented moment ${formatTimestamp(t[f.markedIndex]!, true)} is frame ${f.markedIndex + 1}, outlined in red`
+  );
+}
+
+/** Lines shared by overall comments and mark comments: annotation, snapshot, frames, task. */
+function commentDetails(api: RevApi, c: ReviewCommentInfo, indent: string, withFrames = true) {
   const lines: string[] = [];
   const shapes = describeAnnotation(c.annotation);
   if (shapes) lines.push(`${indent}annotation: ${shapes}`);
   if (c.snapshotUrl) lines.push(`${indent}snapshot: ${api.url(c.snapshotUrl)}`);
+  if (c.frames && withFrames) lines.push(`${indent}frames: ${api.url(c.frames.url)} (${describeFrames(c.frames)})`);
   if (c.task) {
     const agentClosed = c.task.closureReview === "agent" ? ", agent-closed" : "";
     lines.push(`${indent}task: ${c.task.ref} (${TASK_STATUS_LABELS[c.task.status]}${agentClosed})`);
@@ -100,7 +111,8 @@ export function formatComment(
   for (const r of replies) lines.push(replyLine(r, `${indent}    `));
   for (const m of marks) {
     lines.push(`${indent}    #${m.markIndex} [${m.status}] ${m.body.replace(/\n+/g, " ")} (comment ${m.id})`);
-    lines.push(...commentDetails(api, m, `${indent}        `));
+    // A mark shares its overall comment's moment, so its frames were listed above.
+    lines.push(...commentDetails(api, m, `${indent}        `, false));
     for (const r of all.filter((x) => x.parentId === m.id)) lines.push(replyLine(r, `${indent}        `));
   }
   return lines.join("\n");
@@ -122,7 +134,13 @@ export function formatTask(api: RevApi, t: TaskDetail, assetNames = new Map<stri
   lines.push("", t.description.trim() || "(no description)");
   if (t.sourceComments.length) {
     lines.push("", `Review feedback to address (${t.sourceComments.length}):`);
-    for (const c of t.sourceComments) lines.push(formatComment(api, c, assetNames));
+    for (const c of t.sourceComments) {
+      const marks = t.sourceMarks.filter((m) => m.markOf === c.id);
+      lines.push(formatComment(api, c, assetNames, [], "", marks));
+    }
+    if (t.sourceMarks.some((m) => m.status === "rejected")) {
+      lines.push("", "Mark notes shown as [rejected] were turned down by the review owner: leave those alone.");
+    }
   }
   if (t.deliveries.length) {
     lines.push("", "Reviews submitted for this task:");

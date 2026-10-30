@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { access, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
+import { FRAME_SHEET, frameTimes } from "@rev/shared";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import { reviewAssets } from "../db/schema";
@@ -24,9 +25,15 @@ interface Probe {
  * videos browsers cannot play (e.g. .mov/.mkv, HEVC) to H.264 MP4.
  * Work runs one asset at a time in-process; unfinished work resumes on boot.
  */
+type AssetRow = typeof reviewAssets.$inferSelect;
+
+/** Box one frame of a sheet fits in (keeping the video's shape); the marked one gets a red border instead of a grey one. */
+const SHEET_TILE = { w: 480, h: 360, border: 4 };
+
 export class MediaProcessor {
   private queue: Promise<void> = Promise.resolve();
   private missingTools = false;
+  private sheets = new Map<string, Promise<string | null>>();
 
   constructor(
     private readonly db: Db,
@@ -129,6 +136,63 @@ export class MediaProcessor {
         .set({ status: "failed", error: String((err as Error).message ?? err).slice(0, 500) })
         .where(eq(reviewAssets.id, assetId));
       await rm(this.storage.pathOf(`${dir}/playback.mp4`), { force: true });
+    }
+  }
+
+  /**
+   * The storage key of a 3×3 sheet of frames around `atMs` in a video (see `frameTimes`),
+   * rendered on first use and cached next to the asset. Null when ffmpeg is unavailable.
+   */
+  frameSheet(asset: AssetRow, atMs: number): Promise<string | null> {
+    const key = `assets/${asset.id}/frames-${Math.round(atMs)}.jpg`;
+    let pending = this.sheets.get(key);
+    if (!pending) {
+      pending = this.renderSheet(asset, atMs, key).finally(() => this.sheets.delete(key));
+      this.sheets.set(key, pending);
+    }
+    return pending;
+  }
+
+  private async renderSheet(asset: AssetRow, atMs: number, key: string) {
+    const out = this.storage.pathOf(key);
+    if (await access(out).then(() => true, () => false)) return key;
+    if (this.missingTools) return null;
+    const input = this.storage.pathOf(asset.playbackKey ?? asset.storageKey);
+    const { timesMs, markedIndex } = frameTimes(atMs, asset.durationMs);
+    const { w, h, border } = SHEET_TILE;
+    // Every input is the same video, so the tiles come out the same size.
+    const tiles = timesMs.map(
+      (_, i) =>
+        `[${i}:v]scale=${w - 2 * border}:${h - 2 * border}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,` +
+        `pad=iw+${2 * border}:ih+${2 * border}:${border}:${border}:color=${i === markedIndex ? "0xef4444" : "0x3f3f46"},setsar=1[t${i}]`,
+    );
+    const rows = Array.from({ length: FRAME_SHEET.rows }, (_, r) => {
+      const ids = Array.from({ length: FRAME_SHEET.cols }, (_, c) => `[t${r * FRAME_SHEET.cols + c}]`).join("");
+      return `${ids}hstack=${FRAME_SHEET.cols}[r${r}]`;
+    });
+    const stack = `${rows.map((_, r) => `[r${r}]`).join("")}vstack=${FRAME_SHEET.rows}[sheet]`;
+    const tmp = this.storage.tempPath(".jpg");
+    try {
+      await this.ffmpeg(
+        [
+          ...timesMs.flatMap((t) => ["-ss", (t / 1000).toFixed(3), "-i", input]),
+          "-filter_complex", [...tiles, ...rows, stack].join(";"),
+          "-map", "[sheet]",
+          "-frames:v", "1",
+          "-q:v", "4",
+          tmp,
+        ],
+        60_000,
+      );
+      await this.storage.moveIn(tmp, key);
+      return key;
+    } catch (err) {
+      await rm(tmp, { force: true });
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        this.missingTools = true;
+        return null;
+      }
+      throw err;
     }
   }
 

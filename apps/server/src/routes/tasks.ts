@@ -61,10 +61,23 @@ export async function taskDetail(ctx: AppContext, actor: Actor, ref: string): Pr
     data: a.data ?? null,
     createdAt: a.createdAt.toISOString(),
   }));
+  // Notes on single marks of the source comments travel with them, so the numbers on a snapshot mean something.
+  const sourceIds = new Set(commentRows.map((c) => c.id));
+  const overallIds = commentRows.filter((c) => c.markOf == null && c.parentId == null).map((c) => c.id);
+  const markRows = overallIds.length
+    ? (
+        await ctx.db
+          .select()
+          .from(reviewComments)
+          .where(inArray(reviewComments.markOf, overallIds))
+          .orderBy(asc(reviewComments.markIndex))
+      ).filter((m) => !sourceIds.has(m.id))
+    : [];
   const perms = taskPerms(actor, role, task);
   return {
     ...info!,
     sourceComments: await serializeComments(ctx.db, commentRows),
+    sourceMarks: await serializeComments(ctx.db, markRows),
     deliveries: [
       ...roundDeliveries.map(({ review: r, round }) => ({
         id: r.id,

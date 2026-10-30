@@ -30550,11 +30550,11 @@ var ldapTestBody = external_exports.object({
   login: external_exports.string().trim().max(320).optional(),
   password: external_exports.string().max(200).optional()
 });
-function formatTimestamp(ms) {
+function formatTimestamp(ms, exact = false) {
   const total = ms / 1e3;
   const m = Math.floor(total / 60);
   const s = total - m * 60;
-  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+  return exact ? `${m}:${s.toFixed(3).padStart(6, "0")}` : `${m}:${s.toFixed(1).padStart(4, "0")}`;
 }
 
 // src/api.ts
@@ -30755,14 +30755,20 @@ function formatTaskLine(t) {
 function commentHeader(c, assetNames) {
   return [
     c.assetId ? assetNames.get(c.assetId) ?? "asset" : null,
-    c.timestampMs != null ? `@ ${formatTimestamp(c.timestampMs)}` : null
+    c.timestampMs != null ? `@ ${formatTimestamp(c.timestampMs, true)}` : null
   ].filter(Boolean).join(" ");
 }
-function commentDetails(api, c, indent) {
+function describeFrames(f) {
+  const t = f.timesMs;
+  const step = t.length > 1 ? `, ${Number(((t[1] - t[0]) / 1e3).toFixed(3))} s apart` : "";
+  return `${t.length} frames (3\xD73, row by row) from ${formatTimestamp(t[0], true)} to ${formatTimestamp(t.at(-1), true)}${step}; the commented moment ${formatTimestamp(t[f.markedIndex], true)} is frame ${f.markedIndex + 1}, outlined in red`;
+}
+function commentDetails(api, c, indent, withFrames = true) {
   const lines = [];
   const shapes = describeAnnotation(c.annotation);
   if (shapes) lines.push(`${indent}annotation: ${shapes}`);
   if (c.snapshotUrl) lines.push(`${indent}snapshot: ${api.url(c.snapshotUrl)}`);
+  if (c.frames && withFrames) lines.push(`${indent}frames: ${api.url(c.frames.url)} (${describeFrames(c.frames)})`);
   if (c.task) {
     const agentClosed = c.task.closureReview === "agent" ? ", agent-closed" : "";
     lines.push(`${indent}task: ${c.task.ref} (${TASK_STATUS_LABELS[c.task.status]}${agentClosed})`);
@@ -30779,7 +30785,7 @@ function formatComment(api, c, assetNames, replies = [], indent = "", marks = []
   for (const r of replies) lines.push(replyLine(r, `${indent}    `));
   for (const m of marks) {
     lines.push(`${indent}    #${m.markIndex} [${m.status}] ${m.body.replace(/\n+/g, " ")} (comment ${m.id})`);
-    lines.push(...commentDetails(api, m, `${indent}        `));
+    lines.push(...commentDetails(api, m, `${indent}        `, false));
     for (const r of all.filter((x) => x.parentId === m.id)) lines.push(replyLine(r, `${indent}        `));
   }
   return lines.join("\n");
@@ -30798,7 +30804,13 @@ function formatTask(api, t, assetNames = /* @__PURE__ */ new Map()) {
   lines.push("", t.description.trim() || "(no description)");
   if (t.sourceComments.length) {
     lines.push("", `Review feedback to address (${t.sourceComments.length}):`);
-    for (const c of t.sourceComments) lines.push(formatComment(api, c, assetNames));
+    for (const c of t.sourceComments) {
+      const marks = t.sourceMarks.filter((m) => m.markOf === c.id);
+      lines.push(formatComment(api, c, assetNames, [], "", marks));
+    }
+    if (t.sourceMarks.some((m) => m.status === "rejected")) {
+      lines.push("", "Mark notes shown as [rejected] were turned down by the review owner: leave those alone.");
+    }
   }
   if (t.deliveries.length) {
     lines.push("", "Reviews submitted for this task:");
@@ -30899,17 +30911,27 @@ async function submitReviewRound(api, reviewRef, input2) {
     throw err;
   }
 }
-async function fetchSnapshots(api, comments, maxImages = 4, maxBytes = 5 * 1024 * 1024) {
+async function fetchSnapshots(api, comments, maxImages = 6, maxBytes = 8 * 1024 * 1024) {
   const out = [];
+  const seen = /* @__PURE__ */ new Set();
   let bytes = 0;
   for (const c of comments) {
-    if (!c.snapshotUrl || out.length >= maxImages) continue;
-    const { data, mime } = await api.download(c.snapshotUrl);
-    if (bytes + data.length > maxBytes) continue;
-    bytes += data.length;
-    out.push({ comment: c, data, mime });
+    for (const [kind, url2] of [["snapshot", c.snapshotUrl], ["frames", c.frames?.url]]) {
+      if (!url2 || seen.has(url2) || out.length >= maxImages) continue;
+      seen.add(url2);
+      const got = await api.download(url2).catch(() => null);
+      if (!got || bytes + got.data.length > maxBytes) continue;
+      bytes += got.data.length;
+      out.push({ comment: c, kind, data: got.data, mime: got.mime });
+    }
   }
   return out;
+}
+function snapshotCaption(s) {
+  const c = s.comment;
+  if (s.kind === "frames") return `Frames around comment ${c.markOf ?? c.id}: ${describeFrames(c.frames)}. Marks are not drawn on these.`;
+  const mark = c.markIndex != null ? ` (mark #${c.markIndex} only)` : "";
+  return `Snapshot for comment ${c.id}${mark}, with the reviewer's marks drawn and numbered:`;
 }
 async function assetNamesFor(api, reviewRef) {
   if (!reviewRef) return /* @__PURE__ */ new Map();
@@ -40614,8 +40636,10 @@ var INSTRUCTIONS = `Rev is the team's task and review tracker. You act as an age
 
 Workflow:
 1. Pull work: call list_my_tasks, then get_task for details. Tasks created from review feedback include the
-   reviewers' comments, video timestamps, annotation descriptions and annotated snapshot images; address every one.
-   A comment can carry notes on individual marks ("mark #2 of comment \u2026"): each mark is its own piece of feedback.
+   reviewers' comments, exact video timestamps, annotation descriptions, annotated snapshot images and, for video,
+   a 3\xD73 sheet of frames around the commented moment (to judge motion and timing); address every one.
+   A comment can carry notes on individual marks (#1, #2, \u2026 matching the numbers on the snapshot): each mark is
+   its own piece of feedback. Leave alone mark notes the review owner rejected.
 2. Call update_task_status with "in_progress" when you start.
 3. When done, deliver evidence: screenshots (png/jpg/webp/gif) and screen recordings (mp4/webm/mov/mkv) given as
    local file paths, plus notes on what changed and how to verify it.
@@ -40680,10 +40704,10 @@ function createMcpServer(client) {
   server.registerTool(
     "get_task",
     {
-      description: "Get a task's full details: description, the review comments it came from (with timestamps and annotation descriptions), and the annotated snapshot images.",
+      description: "Get a task's full details: description, the review comments it came from (with mark notes, exact timestamps and annotation descriptions), the annotated snapshot images and, for video comments, a sheet of frames around the moment.",
       inputSchema: {
         ref: external_exports.string().describe('Task reference such as "WEB-12"'),
-        include_snapshots: external_exports.boolean().default(true).describe("Attach annotated snapshot images (max 4)")
+        include_snapshots: external_exports.boolean().default(true).describe("Attach annotated snapshots and video frame sheets (max 6 images)")
       },
       annotations: readOnly
     },
@@ -40694,7 +40718,7 @@ function createMcpServer(client) {
       const content = [{ type: "text", text: formatTask(api, task, names) }];
       if (include_snapshots) {
         for (const s of await fetchSnapshots(api, task.sourceComments)) {
-          content.push({ type: "text", text: `Snapshot for comment ${s.comment.id}:` });
+          content.push({ type: "text", text: snapshotCaption(s) });
           content.push({ type: "image", data: s.data.toString("base64"), mimeType: s.mime });
         }
       }
@@ -40796,7 +40820,7 @@ Owner: ${review.owner.name}`
       description: "Read a review round by round: notes, assets, comments with their status (open/accepted/rejected/resolved), mark notes (#n), replies, timestamps and annotations.",
       inputSchema: {
         ref: external_exports.string().describe('Review reference such as "WEB-R3"'),
-        include_snapshots: external_exports.boolean().default(false).describe("Attach annotated snapshot images (max 4)")
+        include_snapshots: external_exports.boolean().default(false).describe("Attach annotated snapshots and video frame sheets (max 6 images)")
       },
       annotations: readOnly
     },
@@ -40807,7 +40831,7 @@ Owner: ${review.owner.name}`
       if (include_snapshots) {
         const open2 = review.comments.filter((c) => !c.parentId && (c.status === "open" || c.status === "accepted"));
         for (const s of await fetchSnapshots(api, open2)) {
-          content.push({ type: "text", text: `Snapshot for comment ${s.comment.id}:` });
+          content.push({ type: "text", text: snapshotCaption(s) });
           content.push({ type: "image", data: s.data.toString("base64"), mimeType: s.mime });
         }
       }
@@ -40991,17 +41015,16 @@ ${url2}`
     emit(cmd, tasks, () => tasks.length ? tasks.map(formatTaskLine).join("\n") : "No tasks assigned to you.");
   });
   const task = program2.command("task").description("Work on a single task");
-  task.command("show").description("Show a task with the review feedback it came from").argument("<ref>", "task reference, e.g. WEB-12").option("--save-snapshots <dir>", "download annotated snapshots into this directory").action(async (ref, opts, cmd) => {
+  task.command("show").description("Show a task with the review feedback it came from").argument("<ref>", "task reference, e.g. WEB-12").option("--save-snapshots <dir>", "download annotated snapshots (and frames around video comments) into this directory").action(async (ref, opts, cmd) => {
     const client = await api();
     const t = await client.task(ref);
     const saved = [];
     if (opts.saveSnapshots) {
       await mkdir2(opts.saveSnapshots, { recursive: true });
-      for (const c of t.sourceComments) {
-        if (!c.snapshotUrl) continue;
-        const { data, mime } = await client.download(c.snapshotUrl);
-        const file2 = path6.join(opts.saveSnapshots, `${t.ref}-${c.id}${mime === "image/jpeg" ? ".jpg" : ".png"}`);
-        await writeFile2(file2, data);
+      for (const s of await fetchSnapshots(client, t.sourceComments, Infinity, Infinity)) {
+        const id = s.kind === "frames" ? `${s.comment.markOf ?? s.comment.id}-frames` : s.comment.id;
+        const file2 = path6.join(opts.saveSnapshots, `${t.ref}-${id}${s.mime === "image/jpeg" ? ".jpg" : ".png"}`);
+        await writeFile2(file2, s.data);
         saved.push(file2);
       }
     }

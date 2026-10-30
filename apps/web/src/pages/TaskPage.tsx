@@ -15,7 +15,8 @@ import {
 import { api } from "../api";
 import { useMembers } from "./Project";
 import { Avatar, Button, Card, CommentStatusBadge, ErrorBox, Field, Input, Markdown, PageLoader, ReviewStatusBadge, Select, Textarea, UserChip } from "../components/ui";
-import { reviewRefPath, timeAgo } from "../lib";
+import { cx, reviewRefPath, timeAgo } from "../lib";
+import { AgentContext } from "../review/AgentContext";
 
 function describeActivity(a: TaskActivityInfo, names: Map<string, string>) {
   const d = (a.data ?? {}) as Record<string, string | null>;
@@ -127,13 +128,8 @@ export function TaskPage() {
             <section className="space-y-2">
               <h2 className="text-sm font-semibold text-zinc-700">Review feedback this task addresses</h2>
               {task.sourceComments.map((c) => (
-                <Card key={c.id} className="flex gap-3 p-3">
-                  {c.snapshotUrl && (
-                    <a href={c.snapshotUrl} target="_blank" rel="noreferrer" className="shrink-0">
-                      <img src={c.snapshotUrl} alt="Annotated frame" className="h-24 w-40 rounded border border-zinc-200 bg-zinc-900 object-contain" />
-                    </a>
-                  )}
-                  <div className="min-w-0 flex-1 space-y-1">
+                <Card key={c.id} className="p-3">
+                  <div className="min-w-0 space-y-1">
                     <div className="flex items-center gap-2 text-xs text-zinc-500">
                       <UserChip user={c.author} />
                       <Link to={reviewRefPath(c.reviewRef) + `?comment=${c.id}`} className="font-mono hover:underline">
@@ -145,6 +141,21 @@ export function TaskPage() {
                       <CommentStatusBadge status={c.status} />
                     </div>
                     <Markdown>{c.body}</Markdown>
+                    {task.sourceMarks
+                      .filter((m) => m.markOf === c.id)
+                      .map((m) => (
+                        <div key={m.id} className={cx("flex items-start gap-2 rounded-md bg-zinc-50 px-2 py-1.5", m.status === "rejected" && "opacity-60")}>
+                          <span
+                            className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ring-1 ring-black/20"
+                            style={{ background: c.annotation?.shapes[(m.markIndex ?? 1) - 1]?.color ?? "#71717a" }}
+                          >
+                            {m.markIndex}
+                          </span>
+                          <Markdown className={cx("min-w-0 flex-1 !text-[13px]", m.status === "rejected" && "line-through")}>{m.body}</Markdown>
+                          <CommentStatusBadge status={m.status} />
+                        </div>
+                      ))}
+                    <AgentContext comment={c} />
                   </div>
                 </Card>
               ))}

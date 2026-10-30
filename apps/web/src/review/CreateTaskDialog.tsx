@@ -14,8 +14,13 @@ function composeDescription(review: ReviewDetail, comments: ReviewCommentInfo[])
       .join(" ");
     const mark = c.markIndex != null ? `mark #${c.markIndex}: ` : "";
     lines.push(`- ${where ? `*${where}*: ` : ""}${mark}${c.body.replace(/\n+/g, " ")}`);
+    // Notes on this comment's marks, unless rejected or picked separately.
+    review.comments
+      .filter((m) => m.markOf === c.id && m.status !== "rejected" && !comments.some((x) => x.id === m.id))
+      .sort((a, b) => a.markIndex! - b.markIndex!)
+      .forEach((m) => lines.push(`  - mark #${m.markIndex}: ${m.body.replace(/\n+/g, " ")}`));
   }
-  if (comments.length) lines.push("", "Annotated frames are attached to the task via its source comments.");
+  if (comments.length) lines.push("", "Annotated snapshots (and frames around video moments) are attached to the task via its source comments.");
   return lines.join("\n");
 }
 

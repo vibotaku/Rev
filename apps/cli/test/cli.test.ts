@@ -134,8 +134,18 @@ describe("MCP server", () => {
       body: "Button is cut off",
       assetId: video.id,
       timestampMs: 1200,
-      annotation: { shapes: [{ type: "rect", x: 0.1, y: 0.2, w: 0.3, h: 0.1, color: "#ff3b30" }] },
+      annotation: {
+        shapes: [
+          { type: "rect", x: 0.1, y: 0.2, w: 0.3, h: 0.1, color: "#ff3b30" },
+          { type: "pin", x: 0.8, y: 0.25, color: "#ff3b30" },
+        ],
+      },
+      marks: [
+        { index: 0, body: "Label overflows" },
+        { index: 1, body: "Icon is late" },
+      ],
     });
+    await admin.patch(`/api/comments/${c.json.marks[1].id}`, { status: "rejected" });
     commentId = c.json.id;
     expect((await admin.upload(`/api/comments/${commentId}/snapshot`, fixtures.png, "image/png", "s.png")).status).toBe(200);
     const task = await admin.post(`/api/reviews/${reviewRef}/tasks`, {
@@ -149,11 +159,20 @@ describe("MCP server", () => {
     const detail = await call("get_task", { ref: "WEB-1" });
     const text = textOf(detail);
     expect(text).toContain("Fix cut-off button");
-    expect(text).toContain("clip.mp4 @ 0:01.2");
-    expect(text).toContain("box at (10%, 20%) size 30%×10%");
-    const image = detail.content.find((x) => x.type === "image");
-    expect(image?.mimeType).toBe("image/png");
-    expect(Buffer.from(image!.data!, "base64").subarray(1, 4).toString()).toBe("PNG");
+    expect(text).toContain("clip.mp4 @ 0:01.200");
+    expect(text).toContain("box at (10%, 20%) size 30%×10%; pin at (80%, 25%)");
+    // The mark notes come with the overall comment, so the numbers on the snapshot mean something.
+    expect(text).toContain("#1 [open] Label overflows");
+    expect(text).toContain("#2 [rejected] Icon is late");
+    expect(text).toContain("turned down by the review owner");
+    // The 2 s clip gets frames 245 ms apart, shifted so the last one stays inside the video.
+    expect(text).toMatch(/frames: http\S+\/api\/media\/frames\/\S+ \(9 frames/);
+    expect(text).toContain("9 frames (3×3, row by row) from 0:00.220 to 0:01.960, 0.245 s apart");
+    expect(text).toContain("the commented moment 0:01.200 is frame 5, outlined in red");
+    const images = detail.content.filter((x) => x.type === "image");
+    expect(images.map((x) => x.mimeType)).toEqual(["image/png", "image/jpeg"]);
+    expect(Buffer.from(images[0]!.data!, "base64").subarray(1, 4).toString()).toBe("PNG");
+    expect(textOf(detail)).toContain("Frames around comment");
 
     const noImages = await call("get_task", { ref: "WEB-1", include_snapshots: false });
     expect(noImages.content.every((x) => x.type === "text")).toBe(true);
@@ -204,7 +223,7 @@ describe("CLI commands", () => {
     const dir = path.join(server.dataDir, "snaps");
     const shown = await cli(["task", "show", "WEB-1", "--save-snapshots", dir], env);
     expect(shown.out).toContain("Review feedback to address (1)");
-    expect(readdirSync(dir)).toHaveLength(1);
+    expect(readdirSync(dir).sort()).toEqual([`WEB-1-${commentId}-frames.jpg`, `WEB-1-${commentId}.png`].sort());
 
     const created = await cli(
       ["review", "create", "-p", "WEB", "-t", "Button fixed", "--task", "WEB-1", "--caption-each", fixtures.png],
