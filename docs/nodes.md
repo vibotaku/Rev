@@ -63,11 +63,16 @@ On the node, run `tmux attach -t rev-<workspace>`; the terminal icon next to a w
 
 ### macOS: privacy permissions
 
-Programs started by launchd don't get the file permissions your terminal app has. This matters if Claude Code reads files on an external volume or in Desktop, Documents or Downloads, for example a skill symlinked from there. macOS then asks whether **node** may access them, and Claude Code waits until you answer. When a session is stuck like this, starting it fails after 60 seconds with a note about it.
+Programs started by launchd don't get the permissions your terminal app has. Two things can need a one-time **Allow** for **node**, on the Mac's own screen:
+
+- **Local Network**, when Rev's address is on the Mac's local network. Until you allow it, the node can't reach Rev: its log shows `EHOSTUNREACH`, and Rev shows it offline. It retries every minute.
+- **Files and Folders**, when Claude Code reads files on an external volume or in Desktop, Documents or Downloads, for example a skill symlinked from there. Claude Code waits until you answer. When a session is stuck like this, starting it fails after 60 seconds with a note about it.
+
+macOS doesn't always pop up the question for command-line programs like node. If it doesn't, turn node on yourself under **System Settings → Privacy & Security → Local Network**, and under **Files and Folders**. A Homebrew upgrade of node can reset these permissions.
 
 To fix it, either:
 
-- allow node when macOS asks, or under **System Settings → Privacy & Security** (Files and Folders, or Full Disk Access); or
+- allow node as above (or give it Full Disk Access); or
 - run the node from your terminal instead of as a service:
   ```bash
   ~/.local/bin/rev node install --no-service

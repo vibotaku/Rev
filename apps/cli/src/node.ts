@@ -419,7 +419,13 @@ export class NodeRunner {
         }
       } catch (e) {
         const rejected = e instanceof RevApiError && e.status === 401;
-        this.log(rejected ? "Rev rejected this node's token (disabled or removed in Rev?); retrying in a minute" : `error: ${errorText(e)}`);
+        // macOS blocks background services from the local network until allowed.
+        const blocked = process.platform === "darwin" && /EHOSTUNREACH/.test(errorText(e));
+        this.log(
+          rejected
+            ? "Rev rejected this node's token (disabled or removed in Rev?); retrying in a minute"
+            : `error: ${errorText(e)}${blocked ? " (macOS: allow node under System Settings → Privacy & Security → Local Network)" : ""}`,
+        );
         await this.sys.sleep(rejected ? 60_000 : delay);
         delay = Math.min(delay * 2, 60_000);
       }

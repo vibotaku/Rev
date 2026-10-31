@@ -388,8 +388,8 @@ export function buildProgram(io: Io = defaultIo) {
             ...(service?.kind === "systemd" ? ["To keep it running while you are logged out: loginctl enable-linger $USER"] : []),
             ...(service?.kind === "launchd"
               ? [
-                  "macOS: if Claude Code reads files on an external volume or in Desktop, Documents or Downloads, allow node when macOS asks " +
-                    "(System Settings → Privacy & Security).",
+                  "macOS: allow node when macOS asks (System Settings → Privacy & Security): Local Network if Rev is on your local network, " +
+                    "and Files and Folders if Claude Code reads files on an external volume or in Desktop, Documents or Downloads.",
                 ]
               : []),
             `Saved to ${paths.config}`,

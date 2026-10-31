@@ -41285,7 +41285,10 @@ ${lines}` : ""}`);
         }
       } catch (e) {
         const rejected = e instanceof RevApiError && e.status === 401;
-        this.log(rejected ? "Rev rejected this node's token (disabled or removed in Rev?); retrying in a minute" : `error: ${errorText(e)}`);
+        const blocked = process.platform === "darwin" && /EHOSTUNREACH/.test(errorText(e));
+        this.log(
+          rejected ? "Rev rejected this node's token (disabled or removed in Rev?); retrying in a minute" : `error: ${errorText(e)}${blocked ? " (macOS: allow node under System Settings \u2192 Privacy & Security \u2192 Local Network)" : ""}`
+        );
         await this.sys.sleep(rejected ? 6e4 : delay);
         delay = Math.min(delay * 2, 6e4);
       }
@@ -41605,7 +41608,7 @@ ${url2}`
           service ? `Service: ${service.kind} (${service.file}); logs: ${service.logs}` : "No service installed: run `rev node run` to serve Rev.",
           ...service?.kind === "systemd" ? ["To keep it running while you are logged out: loginctl enable-linger $USER"] : [],
           ...service?.kind === "launchd" ? [
-            "macOS: if Claude Code reads files on an external volume or in Desktop, Documents or Downloads, allow node when macOS asks (System Settings \u2192 Privacy & Security)."
+            "macOS: allow node when macOS asks (System Settings \u2192 Privacy & Security): Local Network if Rev is on your local network, and Files and Folders if Claude Code reads files on an external volume or in Desktop, Documents or Downloads."
           ] : [],
           `Saved to ${paths.config}`,
           "Open Rev \u2192 Nodes to create workspaces here."
