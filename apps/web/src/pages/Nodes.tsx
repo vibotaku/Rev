@@ -374,6 +374,13 @@ export function Nodes() {
         : 10_000,
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ["nodes"] });
+  // An admin with no nodes of their own may still be looking for someone else's.
+  const others = useQuery({
+    queryKey: ["nodes", true],
+    queryFn: () => api.get<NodeInfo[]>("/api/nodes?all=1"),
+    enabled: me.role === "admin" && !showAll && data?.length === 0,
+  });
+  const otherCount = others.data?.length ?? 0;
 
   return (
     <div>
@@ -401,8 +408,20 @@ export function Nodes() {
           <PageLoader />
         ) : !data?.length ? (
           <>
-            <EmptyState icon={<Server className="size-8" />} title="No nodes yet">
-              A node is a computer that Rev can create workspaces and agents on, and start Claude Code in.
+            <EmptyState icon={<Server className="size-8" />} title={otherCount ? "You have no nodes of your own" : "No nodes yet"}>
+              {otherCount ? (
+                <>
+                  {otherCount === 1 ? "1 node belongs" : `${otherCount} nodes belong`} to other people
+                  {" ("}
+                  {[...new Set(others.data!.map((n) => n.owner.email ?? n.owner.name))].join(", ")}
+                  {"). "}
+                  <button className="text-accent-600 hover:underline" onClick={() => setShowAll(true)}>
+                    Show all nodes
+                  </button>
+                </>
+              ) : (
+                "A node is a computer that Rev can create workspaces and agents on, and start Claude Code in."
+              )}
             </EmptyState>
             <AddNode />
           </>
