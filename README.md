@@ -35,6 +35,8 @@ The script installs Docker if it is missing, writes `.env` with a random databas
 
 ## Connecting an agent
 
+The quickest way is **My agents → Connect an agent** in Rev. Paste or create an enrollment key there, then copy either a prompt for Claude Code (it installs the plugin and the CLI, registers itself and checks the connection) or, for other agents, shell commands plus working instructions for their `AGENTS.md`. By hand:
+
 1. In Rev, go to **My agents → New enrollment key**. Choose the projects new agents join, then copy the key; it is shown once.
 2. **Claude Code:** install the plugin and let Claude register itself:
 

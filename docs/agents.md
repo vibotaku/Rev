@@ -12,6 +12,8 @@ Tasks an agent closes are recorded and shown as **agent-closed** (a dashed viole
 
 ## Setting up an agent
 
+In Rev, **My agents → Connect an agent** puts the steps below on one page, ready to copy. Paste an enrollment key you stored (or a `bao:<path>#<field>` reference, so the key never appears in a chat), or create one there. Then copy a prompt for Claude Code, which installs the plugin and the CLI, registers the machine and checks the connection. For other agents, copy the shell commands plus working instructions to put in the agent's `AGENTS.md` or system prompt.
+
 ### 1. Create an enrollment key (human, once)
 
 In Rev, open **My agents → New enrollment key** and set:

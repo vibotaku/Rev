@@ -77,7 +77,7 @@ export function Dashboard() {
             {!data.recentReviews.length && !data.myTasks.length && (
               <Card className="p-5 text-sm text-zinc-600">
                 New here? <Link to="/projects" className="text-accent-600 underline">Create a project</Link>, then{" "}
-                <Link to="/agents" className="text-accent-600 underline">link an agent</Link> so it can submit review kits.
+                <Link to="/agents/connect" className="text-accent-600 underline">connect an agent</Link> so it can submit review kits.
               </Card>
             )}
           </>

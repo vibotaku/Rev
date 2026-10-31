@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { Copy } from "lucide-react";
+import { cx } from "../lib";
 
-export function CopyBlock({ text }: { text: string }) {
+/** `wrap` wraps long lines (prose prompts) instead of scrolling (commands). */
+export function CopyBlock({ text, wrap }: { text: string; wrap?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="group relative">
-      <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 pr-10 text-xs leading-relaxed text-zinc-100">{text}</pre>
+      <pre className={cx("rounded-md bg-zinc-900 p-3 pr-10 text-xs leading-relaxed text-zinc-100", wrap ? "break-words whitespace-pre-wrap" : "overflow-x-auto")}>
+        {text}
+      </pre>
       <button
         className="absolute top-2 right-2 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
         onClick={() => {

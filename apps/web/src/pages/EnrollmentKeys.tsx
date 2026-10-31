@@ -6,21 +6,7 @@ import { api } from "../api";
 import { Badge, Button, Card, ErrorBox, Field, Input, Modal, Select } from "../components/ui";
 import { cx, timeAgo } from "../lib";
 import { CopyBlock } from "../components/CopyBlock";
-
-export function enrollInstructions(key: string) {
-  const origin = window.location.origin;
-  return [
-    "# Claude Code (recommended): install the Rev plugin, then let Claude register itself",
-    "/plugin marketplace add vibotaku/Rev",
-    "/plugin install rev@vibotaku",
-    `/rev:setup ${origin} ${key}`,
-    "",
-    "# Any other agent, CI job or script (Node.js 20+)",
-    `mkdir -p ~/.local/bin && curl -fsSL ${origin}/downloads/rev.mjs -o ~/.local/bin/rev && chmod +x ~/.local/bin/rev`,
-    `REV_ENROLL_KEY=${key} rev register --url ${origin} --name "$(hostname -s)-agent"`,
-    "rev mcp   # MCP server for any MCP client, e.g. `claude mcp add rev -- rev mcp`",
-  ].join("\n");
-}
+import { AgentInstructions } from "./ConnectAgent";
 
 function keyStatus(k: EnrollmentKeyInfo) {
   if (k.revokedAt) return { label: "revoked", className: "bg-red-50 text-red-600" };
@@ -144,8 +130,7 @@ export function EnrollmentKeys({ showAll }: { showAll: boolean }) {
             <code className="text-xs">bao:&lt;path&gt;#&lt;field&gt;</code> to <code className="text-xs">/rev:setup</code>).
           </p>
           <CopyBlock text={created.key} />
-          <p className="text-sm text-zinc-600">On each agent's machine:</p>
-          <CopyBlock text={enrollInstructions(created.key)} />
+          <AgentInstructions enrollKey={created.key} />
         </Modal>
       )}
       {revoking && (
@@ -163,7 +148,7 @@ export function EnrollmentKeys({ showAll }: { showAll: boolean }) {
   );
 }
 
-function CreateKey({ onClose, onCreated }: { onClose: () => void; onCreated: (r: { key: string; info: EnrollmentKeyInfo }) => void }) {
+export function CreateKey({ onClose, onCreated }: { onClose: () => void; onCreated: (r: { key: string; info: EnrollmentKeyInfo }) => void }) {
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.get<ProjectInfo[]>("/api/projects") });
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<Record<string, "member" | "viewer" | undefined>>({});

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, KeyRound, Plus, Trash2 } from "lucide-react";
-import { Link } from "react-router";
+import { Bot, KeyRound, Plug, Plus, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router";
 import type { AgentInfo } from "@rev/shared";
 import { api } from "../api";
 import { useUser } from "../auth";
@@ -31,6 +31,7 @@ export function setupInstructions(token: string) {
 export function Agents() {
   const me = useUser();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [showAll, setShowAll] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newToken, setNewToken] = useState<{ agent: string; token: string } | null>(null);
@@ -74,6 +75,9 @@ export function Agents() {
             <Button onClick={() => setCreating(true)} title="Create an agent by hand and copy its token to the machine">
               <Plus className="size-4" /> New agent (manual)
             </Button>
+            <Button variant="primary" onClick={() => navigate("/agents/connect")} title="Instructions to copy to the agent's machine">
+              <Plug className="size-4" /> Connect an agent
+            </Button>
           </>
         }
       />
@@ -85,8 +89,10 @@ export function Agents() {
           <PageLoader />
         ) : !data?.length ? (
           <EmptyState icon={<Bot className="size-8" />} title="No agents yet">
-            Create an enrollment key above and run <code className="text-xs">/rev:setup</code> (Claude Code plugin) or{" "}
-            <code className="text-xs">rev register</code> on the agent's machine, or create an agent by hand.
+            <Link to="/agents/connect" className="text-accent-600 hover:underline">
+              Connect an agent
+            </Link>{" "}
+            with instructions to paste into Claude Code or run on the agent's machine, or create one by hand.
           </EmptyState>
         ) : (
           data.map((a) => (

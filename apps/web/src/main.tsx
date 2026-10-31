@@ -10,6 +10,7 @@ import { Account } from "./pages/Account";
 import { AdminLayout, AdminPeople } from "./pages/Admin";
 import { AdminActiveDirectory } from "./pages/AdminActiveDirectory";
 import { Agents } from "./pages/Agents";
+import { ConnectAgent } from "./pages/ConnectAgent";
 import { Dashboard } from "./pages/Dashboard";
 import { Invite, Login, Setup } from "./pages/Auth";
 import { ProjectLayout, ProjectMembers, ProjectSettings } from "./pages/Project";
@@ -39,6 +40,7 @@ const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: "projects", element: <Projects /> },
       { path: "agents", element: <Agents /> },
+      { path: "agents/connect", element: <ConnectAgent /> },
       {
         path: "admin",
         element: <AdminLayout />,
