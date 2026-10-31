@@ -41340,7 +41340,15 @@ ${Object.entries(vars).map(([k, v]) => `    <key>${k}</key><string>${xml(v)}</st
     await writeFile2(file2, plist);
     const domain2 = `gui/${process.getuid()}`;
     await sys.exec("launchctl", ["bootout", `${domain2}/${LABEL}`]).catch(() => void 0);
-    await sys.exec("launchctl", ["bootstrap", domain2, file2]);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await sys.exec("launchctl", ["bootstrap", domain2, file2]);
+        break;
+      } catch (e) {
+        if (attempt >= 10) throw e;
+        await sys.sleep(1e3);
+      }
+    }
     return { kind: "launchd", file: file2, logs };
   }
   if (process.platform === "linux") {

@@ -495,7 +495,16 @@ ${Object.entries(vars)
     await writeFile(file, plist);
     const domain = `gui/${process.getuid!()}`;
     await sys.exec("launchctl", ["bootout", `${domain}/${LABEL}`]).catch(() => undefined);
-    await sys.exec("launchctl", ["bootstrap", domain, file]);
+    // bootout returns before the old service is gone, and bootstrapping it again too soon fails.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await sys.exec("launchctl", ["bootstrap", domain, file]);
+        break;
+      } catch (e) {
+        if (attempt >= 10) throw e;
+        await sys.sleep(1000);
+      }
+    }
     return { kind: "launchd", file, logs };
   }
 
