@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderKanban, Plus } from "lucide-react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import type { ProjectInfo } from "@rev/shared";
 import { api } from "../api";
 import { PageHeader } from "../components/Layout";
@@ -10,15 +10,36 @@ import { Badge, Button, Card, EmptyState, ErrorBox, Field, Input, Modal, PageLoa
 export function Projects() {
   const [creating, setCreating] = useState(false);
   const { data, isLoading, error } = useQuery({ queryKey: ["projects"], queryFn: () => api.get<ProjectInfo[]>("/api/projects") });
+  // Archived projects are hidden unless ?archived is set; shown, they come last.
+  const [params, setParams] = useSearchParams();
+  const showArchived = params.has("archived");
+  const archivedCount = data?.filter((p) => p.archived).length ?? 0;
+  const shown = (data ?? []).filter((p) => showArchived || !p.archived).sort((a, b) => Number(a.archived) - Number(b.archived));
+  const setShowArchived = (on: boolean) =>
+    setParams(
+      (p) => {
+        if (on) p.set("archived", "1");
+        else p.delete("archived");
+        return p;
+      },
+      { replace: true },
+    );
 
   return (
     <div>
       <PageHeader
         title="Projects"
         actions={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            <Plus className="size-4" /> New project
-          </Button>
+          <>
+            {archivedCount > 0 && (
+              <label className="flex items-center gap-1.5 text-sm text-zinc-600">
+                <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Show archived ({archivedCount})
+              </label>
+            )}
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              <Plus className="size-4" /> New project
+            </Button>
+          </>
         }
       />
       <div className="mx-auto max-w-5xl px-8 py-6">
@@ -29,9 +50,16 @@ export function Projects() {
           <EmptyState icon={<FolderKanban className="size-8" />} title="No projects yet">
             Projects hold tasks and review kits. Create one and invite your team and agents.
           </EmptyState>
+        ) : !shown.length ? (
+          <EmptyState icon={<FolderKanban className="size-8" />} title="No active projects">
+            {archivedCount === 1 ? "Your only project is archived." : `All ${archivedCount} projects are archived.`}{" "}
+            <button className="text-accent-600 hover:underline" onClick={() => setShowArchived(true)}>
+              Show them
+            </button>
+          </EmptyState>
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
-            {data.map((p) => (
+            {shown.map((p) => (
               <Link key={p.id} to={`/p/${p.key}`}>
                 <Card className="h-full p-4 transition hover:border-zinc-300 hover:shadow">
                   <div className="flex items-center gap-2">
@@ -42,9 +70,9 @@ export function Projects() {
                   </div>
                   {p.description && <p className="mt-2 line-clamp-2 text-sm text-zinc-500">{p.description}</p>}
                   <div className="mt-3 flex gap-4 text-xs text-zinc-500">
-                    <span>{p.counts.openTasks} open tasks</span>
-                    <span>{p.counts.openReviews} open reviews</span>
-                    <span>{p.counts.members} members</span>
+                    <span>{p.counts.openTasks} open task{p.counts.openTasks === 1 ? "" : "s"}</span>
+                    <span>{p.counts.openReviews} open review{p.counts.openReviews === 1 ? "" : "s"}</span>
+                    <span>{p.counts.members} member{p.counts.members === 1 ? "" : "s"}</span>
                   </div>
                 </Card>
               </Link>
