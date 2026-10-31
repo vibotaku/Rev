@@ -25,6 +25,7 @@ import dashboardRoutes from "./routes/dashboard";
 import enrollmentRoutes from "./routes/enrollment";
 import ldapAdminRoutes from "./routes/ldap-admin";
 import mediaRoutes from "./routes/media";
+import nodeRoutes from "./routes/nodes";
 import projectRoutes from "./routes/projects";
 import reviewRoutes from "./routes/reviews";
 import roundRoutes from "./routes/rounds";
@@ -133,6 +134,7 @@ export async function createApp(config: Config, options: CreateAppOptions = {}) 
     adminRoutes,
     agentRoutes,
     enrollmentRoutes,
+    nodeRoutes,
     ldapAdminRoutes,
     projectRoutes,
     taskRoutes,

@@ -21,6 +21,7 @@ agent ──rev review create──▶ review kit ──humans annotate & commen
 - **Human-reviewed vs agent-closed.** Agents may close their own tasks. Every closure records who closed it and whether a human has reviewed it. Agent closures show with a dashed violet "agent" badge on the board, in lists, and on reviews, until a human marks them reviewed (or closes the task themselves). Your dashboard lists what your agents closed, and the history stays in the task's activity log.
 - **Auth and privileges.** Email/password accounts (invite-only) and optional **Active Directory** sign-in over LDAPS, restricted to an AD group, with accounts created on first sign-in and periodic re-checks that cut off people who leave, along with their agents. Scoped agent API tokens, and global and per-project roles. See [Permissions](#permissions) and [docs/active-directory.md](docs/active-directory.md).
 - **Agent self-registration.** A human creates an **enrollment key** with default projects, a use limit, and an expiry. Agents holding it register themselves, become linked to that human, and get their own token. Keys can be revoked; you can optionally disable every agent enrolled with a key at the same time.
+- **Nodes.** Run `rev node install` on a computer, and from Rev you can create workspaces on it. Each workspace is a folder, cloned from git or empty, with its own agent linked to you. You can also start and stop Claude Code in it, in tmux; a running session is told about new tasks as they are assigned. See [docs/nodes.md](docs/nodes.md).
 - **Agent tooling.** A Claude Code plugin (`/rev:setup`, a `/rev:workflow` skill, and MCP tools) plus a single-file `rev` CLI. The CLI is served by your Rev instance at `/downloads/rev.mjs` and also runs as an MCP server (`rev mcp`).
 - **Phones and tablets.** On small screens the sidebar becomes a menu and pages stack into one column. The review page puts the video on top and keeps it in view while you scroll the comments; tapping a comment's time or a timeline marker jumps to that moment.
 - **Easy to self-host.** One `docker compose up -d` brings up Rev, Postgres, and ffmpeg. See the [Proxmox guide](docs/deploy-proxmox.md).
@@ -54,6 +55,8 @@ The quickest way is **My agents → Connect an agent** in Rev. Paste or create a
    REV_ENROLL_KEY=rev_enroll_… rev register --url https://rev.example.com --name build-01
    rev mcp      # stdio MCP server for any MCP client
    ```
+
+To have Rev create agents for you on your own computers, set them up as [nodes](docs/nodes.md) instead.
 
 You can still create an agent by hand (**New agent (manual)**) and use `rev login --url … --token …`. See **[docs/agents.md](docs/agents.md)** for setup details, every CLI command, and the MCP tools.
 

@@ -4,6 +4,9 @@ import {
   MEDIA_EXTENSIONS,
   type AgentRegistration,
   type Me,
+  type NodeAgentGrant,
+  type NodeJob,
+  type NodeRegistration,
   type ProjectInfo,
   type ReviewAssetInfo,
   type ReviewCommentInfo,
@@ -80,6 +83,17 @@ export class RevApi {
     return (await res.json()) as T;
   }
 
+  /** Like request(), but null when the server answers 204 No Content. */
+  async requestOrNull<T>(method: string, pathname: string, body?: unknown): Promise<T | null> {
+    const res = await this.send(
+      method,
+      pathname,
+      body === undefined ? undefined : JSON.stringify(body),
+      body === undefined ? {} : { "content-type": "application/json" },
+    );
+    return res.status === 204 ? null : ((await res.json()) as T);
+  }
+
   /** Fetches an authenticated binary resource such as a comment snapshot. */
   async download(pathOrUrl: string) {
     const res = await this.send("GET", pathOrUrl);
@@ -93,6 +107,30 @@ export class RevApi {
   /** Self-registration with an enrollment key; needs no API token. */
   static register(baseUrl: string, body: { key: string; name: string; description: string }) {
     return new RevApi(baseUrl, "").request<AgentRegistration>("POST", "/api/agents/register", body);
+  }
+
+  /** Registers this machine as a node with an enrollment key; needs no API token. */
+  static registerNode(baseUrl: string, body: Record<string, unknown> & { key: string; name: string }) {
+    return new RevApi(baseUrl, "").request<NodeRegistration>("POST", "/api/nodes/register", body);
+  }
+
+  // Node endpoints: this client must hold a node token.
+
+  /** The next job, waiting up to `wait` seconds for one; null if there is none. */
+  nextJob(wait: number) {
+    return this.requestOrNull<NodeJob>("GET", `/api/node/jobs/next?wait=${wait}`);
+  }
+
+  reportJob(id: string, result: { ok: boolean; error?: string; path?: string }) {
+    return this.request<{ ok: true }>("POST", `/api/node/jobs/${id}/result`, result);
+  }
+
+  reportState(state: Record<string, unknown> & { sessions: string[] }) {
+    return this.request<{ node: { id: string; name: string } }>("PUT", "/api/node/state", state);
+  }
+
+  createWorkspaceAgent(workspaceId: string) {
+    return this.request<NodeAgentGrant>("POST", `/api/node/workspaces/${workspaceId}/agent`);
   }
 
   projects() {

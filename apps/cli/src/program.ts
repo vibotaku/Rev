@@ -8,12 +8,26 @@ import { configPath, loadConfig, saveConfig } from "./config";
 import { formatReview, formatTask, formatTaskLine } from "./format";
 import { assetNamesFor, createReviewKit, fetchSnapshots, submitReviewRound } from "./kit";
 import { runMcpServer } from "./mcp";
+import {
+  detectTools,
+  installService,
+  loadNodeConfig,
+  NodeRunner,
+  nodePaths,
+  realSys,
+  uninstallService,
+  writePrivate,
+  type NodeConfig,
+  type Sys,
+} from "./node";
 import { VERSION } from "./version";
 
 export interface Io {
   out(text: string): void;
   err(text: string): void;
   env: NodeJS.ProcessEnv;
+  /** Runs programs for `rev node` (git, tmux, claude, launchctl…); swappable in tests. */
+  sys?: Sys;
 }
 
 const defaultIo: Io = {
@@ -306,6 +320,126 @@ export function buildProgram(io: Io = defaultIo) {
     .action(async (ref: string, text: string, _opts, cmd: Command) => {
       const t = await (await api()).commentOnTask(ref, text);
       emit(cmd, t, () => `Commented on ${t.ref}`);
+    });
+
+  // ---- Node ------------------------------------------------------------------
+
+  const sys = io.sys ?? realSys;
+  const node = program
+    .command("node")
+    .description("Make this computer a Rev node: Rev can then create workspaces with agents here, and start Claude Code in them");
+
+  node
+    .command("install")
+    .description("Register this computer as a node (once) and install the background service that runs it")
+    .option("--url <url>", "Rev base URL, e.g. https://rev.example.com")
+    .option("--key <key>", "enrollment key (rev_enroll_...); `-` reads it from stdin; defaults to $REV_ENROLL_KEY")
+    .option("--name <name>", "node name shown in Rev (default: the host name)")
+    .option("--root <dir>", "folder to create workspaces in (default: ~/rev-workspaces)")
+    .option(
+      "--claude-args <args>",
+      'extra arguments for claude in agent sessions, e.g. "--permission-mode acceptEdits" (default: none; your Claude Code settings apply)',
+    )
+    .option("--no-service", "only register; run `rev node run` yourself")
+    .option("--force", "register again as a new node even if this computer already is one")
+    .action(
+      async (
+        opts: { url?: string; key?: string; name?: string; root?: string; claudeArgs?: string; service: boolean; force?: boolean },
+        cmd: Command,
+      ) => {
+        const paths = nodePaths(io.env);
+        let cfg = await loadNodeConfig(io.env);
+        let registered = false;
+        if (!cfg || opts.force) {
+          if (!opts.url) throw new Error("Pass --url <Rev base URL> to register this computer as a node.");
+          const key = (opts.key === "-" ? await readStdin() : (opts.key ?? io.env.REV_ENROLL_KEY ?? "")).trim();
+          if (!key) throw new Error("No enrollment key: pass --key <key>, --key - (stdin), or set REV_ENROLL_KEY.");
+          const baseUrl = opts.url.replace(/\/+$/, "");
+          const draft: Omit<NodeConfig, "token" | "nodeId"> = {
+            url: baseUrl,
+            name: opts.name ?? (os.hostname().split(".")[0] || "node"),
+            workspaceRoot: path.resolve(opts.root ?? paths.defaultRoot),
+            claudeArgs: opts.claudeArgs?.split(/\s+/).filter(Boolean) ?? [],
+          };
+          const runner = new NodeRunner({ ...draft, token: "", nodeId: "" }, sys, io.env, () => undefined);
+          const reg = await RevApi.registerNode(baseUrl, { key, name: draft.name, ...(await runner.facts()) });
+          cfg = { ...draft, token: reg.token, nodeId: reg.node.id };
+          registered = true;
+        } else {
+          // Already a node: optionally change local settings, then reinstall the service.
+          if (opts.root) cfg.workspaceRoot = path.resolve(opts.root);
+          if (opts.claudeArgs !== undefined) cfg.claudeArgs = opts.claudeArgs.split(/\s+/).filter(Boolean);
+        }
+        await writePrivate(paths.config, cfg);
+        await mkdir(cfg.workspaceRoot, { recursive: true });
+        const tools = await detectTools(sys);
+        const service = opts.service ? await installService(io.env, sys, process.argv[1] ?? "") : null;
+        const missing = (["git", "tmux", "claude"] as const).filter((t) => !tools[t]);
+        emit(cmd, { node: { id: cfg.nodeId, name: cfg.name, url: cfg.url }, registered, workspaceRoot: cfg.workspaceRoot, tools, service }, () =>
+          [
+            registered ? `Registered ${cfg.name} as a node on ${cfg.url}` : `${cfg.name} is already a node on ${cfg.url}`,
+            `Workspaces: ${cfg.workspaceRoot}`,
+            `Claude Code arguments: ${cfg.claudeArgs.join(" ") || "(none; your Claude Code settings apply)"}`,
+            `Tools: ${(["git", "tmux", "claude"] as const).map((t) => `${t} ${tools[t] ? "yes" : "MISSING"}`).join(", ")}`,
+            ...(missing.length ? [`Install ${missing.join(", ")} to let Rev ${missing.includes("git") ? "clone repositories and " : ""}start agents here.`] : []),
+            service
+              ? `Service: ${service.kind} (${service.file}); logs: ${service.logs}`
+              : "No service installed: run `rev node run` to serve Rev.",
+            ...(service?.kind === "systemd" ? ["To keep it running while you are logged out: loginctl enable-linger $USER"] : []),
+            ...(service?.kind === "launchd"
+              ? [
+                  "macOS: if Claude Code reads files on an external volume or in Desktop, Documents or Downloads, allow node when macOS asks " +
+                    "(System Settings → Privacy & Security).",
+                ]
+              : []),
+            `Saved to ${paths.config}`,
+            "Open Rev → Nodes to create workspaces here.",
+          ].join("\n"),
+        );
+      },
+    );
+
+  node
+    .command("run")
+    .description("Serve Rev in the foreground (what the background service runs)")
+    .action(async () => {
+      const cfg = await loadNodeConfig(io.env);
+      if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
+      const stop = new AbortController();
+      for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => stop.abort());
+      await new NodeRunner(cfg, sys, io.env).serve(stop.signal);
+    });
+
+  node
+    .command("status")
+    .description("Show this node's settings, tools and workspaces")
+    .action(async (_opts, cmd: Command) => {
+      const cfg = await loadNodeConfig(io.env);
+      if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
+      const runner = new NodeRunner(cfg, sys, io.env, () => undefined);
+      const [facts, running] = await Promise.all([runner.facts(), runner.runningSessions()]);
+      const registry = JSON.parse(await readFile(nodePaths(io.env).registry, "utf8").catch(() => "{}")) as Record<string, { name: string; path: string; agentName: string }>;
+      const workspaces = Object.entries(registry).map(([id, w]) => ({ id, ...w, running: running.includes(id) }));
+      const { token: _token, ...safe } = cfg;
+      emit(cmd, { node: safe, tools: facts.capabilities, workspaces }, () =>
+        [
+          `${cfg.name} on ${cfg.url}`,
+          `Workspaces folder: ${cfg.workspaceRoot}`,
+          `Claude Code arguments: ${cfg.claudeArgs.join(" ") || "(none)"}`,
+          `Tools: ${(["git", "tmux", "claude"] as const).map((t) => `${t} ${facts.capabilities[t] ?? "MISSING"}`).join(" · ")}`,
+          ...(workspaces.length
+            ? workspaces.map((w) => `  ${w.name.padEnd(20)} ${w.running ? "running" : "stopped"}  ${w.agentName}  ${w.path}`)
+            : ["No workspaces yet."]),
+        ].join("\n"),
+      );
+    });
+
+  node
+    .command("uninstall")
+    .description("Remove the background service (the node stays registered; remove it in Rev → Nodes)")
+    .action(async (_opts, cmd: Command) => {
+      const file = await uninstallService(io.env, sys);
+      emit(cmd, { removed: file }, () => `Removed the service (${file}). Workspaces and their folders are untouched.`);
     });
 
   // ---- MCP -------------------------------------------------------------------

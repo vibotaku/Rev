@@ -45,3 +45,11 @@ export function newApiToken() {
   const token = `rev_${randomToken(32)}`;
   return { token, hash: sha256(token), prefix: token.slice(0, 12) };
 }
+
+export const NODE_TOKEN_PREFIX = "rev_node_";
+
+/** Node tokens look like `rev_node_<43 chars>`; they only work on the /api/node/ endpoints. */
+export function newNodeToken() {
+  const token = `${NODE_TOKEN_PREFIX}${randomToken(32)}`;
+  return { token, hash: sha256(token), prefix: token.slice(0, 17) };
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, FolderKanban, LayoutDashboard, LogOut, Menu, Settings, Shield, X } from "lucide-react";
+import { Bot, FolderKanban, LayoutDashboard, LogOut, Menu, Server, Settings, Shield, X } from "lucide-react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import type { ProjectInfo } from "@rev/shared";
 import { api } from "../api";
@@ -100,6 +100,9 @@ export function Layout() {
           </NavItem>
           <NavItem to="/agents" icon={<Bot className="size-4" />}>
             My agents
+          </NavItem>
+          <NavItem to="/nodes" icon={<Server className="size-4" />}>
+            Nodes
           </NavItem>
           {user.role === "admin" && (
             <NavItem to="/admin" icon={<Shield className="size-4" />}>

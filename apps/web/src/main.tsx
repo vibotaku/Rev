@@ -13,6 +13,7 @@ import { Agents } from "./pages/Agents";
 import { ConnectAgent } from "./pages/ConnectAgent";
 import { Dashboard } from "./pages/Dashboard";
 import { Invite, Login, Setup } from "./pages/Auth";
+import { Nodes } from "./pages/Nodes";
 import { ProjectLayout, ProjectMembers, ProjectSettings } from "./pages/Project";
 import { ProjectReviews } from "./pages/ProjectReviews";
 import { ProjectTasks } from "./pages/ProjectTasks";
@@ -41,6 +42,7 @@ const router = createBrowserRouter([
       { path: "projects", element: <Projects /> },
       { path: "agents", element: <Agents /> },
       { path: "agents/connect", element: <ConnectAgent /> },
+      { path: "nodes", element: <Nodes /> },
       {
         path: "admin",
         element: <AdminLayout />,

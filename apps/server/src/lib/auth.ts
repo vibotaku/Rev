@@ -2,8 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { GlobalRole, UserKind } from "@rev/shared";
 import type { AppContext } from "../context";
-import { apiTokens, sessions, users } from "../db/schema";
-import { randomToken, sha256 } from "./crypto";
+import { apiTokens, nodes, sessions, users } from "../db/schema";
+import { NODE_TOKEN_PREFIX, randomToken, sha256 } from "./crypto";
 import { forbidden, unauthorized } from "./errors";
 
 export interface Actor {
@@ -15,10 +15,18 @@ export interface Actor {
   ownerId: string | null;
 }
 
+/** A computer running `rev node`, authenticated with its node token. It is not a user. */
+export interface NodeActor {
+  id: string;
+  name: string;
+  ownerId: string;
+}
+
 declare module "fastify" {
   interface FastifyRequest {
     actor: Actor | null;
-    authVia: "session" | "token" | null;
+    node: NodeActor | null;
+    authVia: "session" | "token" | "node" | null;
   }
 }
 
@@ -96,6 +104,7 @@ function assertSameOrigin(ctx: AppContext, req: FastifyRequest) {
 
 export function registerAuth(app: FastifyInstance, ctx: AppContext) {
   app.decorateRequest("actor", null);
+  app.decorateRequest("node", null);
   app.decorateRequest("authVia", null);
 
   app.addHook("onRequest", async (req, reply) => {
@@ -104,6 +113,19 @@ export function registerAuth(app: FastifyInstance, ctx: AppContext) {
 
     if (header?.toLowerCase().startsWith("bearer ")) {
       const token = header.slice(7).trim();
+      if (token.startsWith(NODE_TOKEN_PREFIX)) {
+        // Node tokens only reach the /api/node/ endpoints; everywhere else there is no actor.
+        const [row] = await ctx.db
+          .select({ node: nodes, owner: users })
+          .from(nodes)
+          .innerJoin(users, eq(users.id, nodes.ownerId))
+          .where(eq(nodes.tokenHash, sha256(token)))
+          .limit(1);
+        if (!row || row.node.disabledAt || !(await isActive(ctx, row.owner))) throw unauthorized("Invalid or disabled node token");
+        req.node = { id: row.node.id, name: row.node.name, ownerId: row.node.ownerId };
+        req.authVia = "node";
+        return;
+      }
       const [row] = await ctx.db
         .select({ token: apiTokens, user: users })
         .from(apiTokens)
@@ -156,6 +178,11 @@ export function requireHuman(req: FastifyRequest, action = "do that"): Actor {
   const actor = requireActor(req);
   if (actor.kind !== "human") throw forbidden(`Agents cannot ${action}`);
   return actor;
+}
+
+export function requireNode(req: FastifyRequest): NodeActor {
+  if (!req.node) throw unauthorized("This endpoint is for Rev nodes (node token required)");
+  return req.node;
 }
 
 export function requireAdmin(req: FastifyRequest): Actor {

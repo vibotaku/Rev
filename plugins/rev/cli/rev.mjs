@@ -3263,8 +3263,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path7) {
-      let input2 = path7;
+    function removeDotSegments(path8) {
+      let input2 = path8;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3338,11 +3338,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path7) {
-      if (path7 === "" || path7[0] === "/") {
-        return removeDotSegments(path7);
+    function removeDotSegmentsRelative(path8) {
+      if (path8 === "" || path8[0] === "/") {
+        return removeDotSegments(path8);
       }
-      const segments = path7.split("/");
+      const segments = path8.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3705,8 +3705,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path7 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path7 && path7 !== "/" ? path7 : void 0;
+        const path8 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path8 && path8 !== "/" ? path8 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -10367,9 +10367,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
    * @param {string} [path]
    * @return {(string|null|Command)}
    */
-  executableDir(path7) {
-    if (path7 === void 0) return this._executableDir;
-    this._executableDir = path7;
+  executableDir(path8) {
+    if (path8 === void 0) return this._executableDir;
+    this._executableDir = path8;
     return this;
   }
   /**
@@ -10625,9 +10625,9 @@ function useColor() {
 var program = new Command();
 
 // src/program.ts
-import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import os2 from "node:os";
-import path6 from "node:path";
+import { mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
+import os3 from "node:os";
+import path7 from "node:path";
 
 // ../../node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -11446,10 +11446,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path7) {
-  if (!path7)
+function getElementAtPath(obj, path8) {
+  if (!path8)
     return obj;
-  return path7.reduce((acc, key) => acc?.[key], obj);
+  return path8.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11789,11 +11789,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path7, issues) {
+function prefixIssues(path8, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path7);
+    iss.path.unshift(path8);
     return iss;
   });
 }
@@ -12255,16 +12255,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path7 = []) => {
+  const processError = (error63, path8 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -12303,17 +12303,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path7 = []) => {
+  const processError = (error63, path8 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -12352,8 +12352,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path7 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path7) {
+  const path8 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path8) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -29491,13 +29491,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path7 = ref.slice(1).split("/").filter(Boolean);
-  if (path7.length === 0) {
+  const path8 = ref.slice(1).split("/").filter(Boolean);
+  if (path8.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path7[0] === defsKey) {
-    const key = path7[1] === void 0 ? void 0 : decodeJSONPointerSegment(path7[1]);
+  if (path8[0] === defsKey) {
+    const key = path8[1] === void 0 ? void 0 : decodeJSONPointerSegment(path8[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -30441,6 +30441,43 @@ var projectCreateBody = external_exports.object({
   name,
   description: external_exports.string().max(5e3).default("")
 });
+var nodeCapabilities = external_exports.object({
+  node: external_exports.string().max(100),
+  git: external_exports.string().max(200).nullable(),
+  tmux: external_exports.string().max(200).nullable(),
+  claude: external_exports.string().max(200).nullable()
+});
+var nodeFacts = {
+  hostname: external_exports.string().trim().max(255).default(""),
+  platform: external_exports.string().trim().max(50).default(""),
+  arch: external_exports.string().trim().max(50).default(""),
+  version: external_exports.string().trim().max(50).default(""),
+  /** Folder the node creates workspaces in. */
+  workspaceRoot: external_exports.string().trim().max(1e3).default(""),
+  capabilities: nodeCapabilities.nullable().default(null)
+};
+var nodeRegisterBody = external_exports.object({ key: external_exports.string().trim().min(10).max(200), name, ...nodeFacts });
+var nodeStateBody = external_exports.object({ ...nodeFacts, sessions: external_exports.array(external_exports.uuid()).max(1e3).default([]) });
+var nodeUpdateBody = external_exports.object({ name: name.optional(), disabled: external_exports.boolean().optional() });
+var nodeJobResultBody = external_exports.object({
+  ok: external_exports.boolean(),
+  error: external_exports.string().max(5e3).optional(),
+  /** workspace.create: where the workspace ended up on the node. */
+  path: external_exports.string().max(1e3).optional()
+});
+var workspaceName = external_exports.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9._-]{0,47}$/, "Use 1-48 lowercase letters, digits, dots, dashes or underscores, starting with a letter or digit").refine((n) => !/\.\./.test(n) && !n.endsWith("."), "Not a valid folder name");
+var workspaceSession = (name2) => `rev-${name2.replace(/[.:]/g, "_")}`;
+var gitUrl = external_exports.string().trim().max(500).regex(/^(https:\/\/|ssh:\/\/|git@)[^\s]+$/, "Use an https://, ssh:// or git@host:path URL");
+var workspaceCreateBody = external_exports.object({
+  name: workspaceName,
+  /** An existing project the workspace's agent joins… */
+  projectKey: external_exports.string().trim().toUpperCase().optional(),
+  /** …or a new project to create for it. */
+  newProject: external_exports.object({ key: projectKey, name }).optional(),
+  repoUrl: gitUrl.nullable().default(null),
+  /** Start the agent's Claude Code session once the workspace is ready. */
+  start: external_exports.boolean().default(false)
+}).refine((b) => !!b.projectKey !== !!b.newProject, { message: "Choose a project or create a new one", path: ["projectKey"] });
 var projectUpdateBody = external_exports.object({
   name: name.optional(),
   description: external_exports.string().max(5e3).optional(),
@@ -30616,6 +30653,16 @@ var RevApi = class _RevApi {
     );
     return await res.json();
   }
+  /** Like request(), but null when the server answers 204 No Content. */
+  async requestOrNull(method, pathname, body) {
+    const res = await this.send(
+      method,
+      pathname,
+      body === void 0 ? void 0 : JSON.stringify(body),
+      body === void 0 ? {} : { "content-type": "application/json" }
+    );
+    return res.status === 204 ? null : await res.json();
+  }
   /** Fetches an authenticated binary resource such as a comment snapshot. */
   async download(pathOrUrl) {
     const res = await this.send("GET", pathOrUrl);
@@ -30627,6 +30674,24 @@ var RevApi = class _RevApi {
   /** Self-registration with an enrollment key; needs no API token. */
   static register(baseUrl, body) {
     return new _RevApi(baseUrl, "").request("POST", "/api/agents/register", body);
+  }
+  /** Registers this machine as a node with an enrollment key; needs no API token. */
+  static registerNode(baseUrl, body) {
+    return new _RevApi(baseUrl, "").request("POST", "/api/nodes/register", body);
+  }
+  // Node endpoints: this client must hold a node token.
+  /** The next job, waiting up to `wait` seconds for one; null if there is none. */
+  nextJob(wait) {
+    return this.requestOrNull("GET", `/api/node/jobs/next?wait=${wait}`);
+  }
+  reportJob(id, result) {
+    return this.request("POST", `/api/node/jobs/${id}/result`, result);
+  }
+  reportState(state) {
+    return this.request("PUT", "/api/node/state", state);
+  }
+  createWorkspaceAgent(workspaceId) {
+    return this.request("POST", `/api/node/workspaces/${workspaceId}/agent`);
   }
   projects() {
     return this.request("GET", "/api/projects");
@@ -31320,8 +31385,8 @@ function getErrorMap2() {
 
 // ../../node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path7, errorMaps, issueData } = params;
-  const fullPath = [...path7, ...issueData.path || []];
+  const { data, path: path8, errorMaps, issueData } = params;
+  const fullPath = [...path8, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -31436,11 +31501,11 @@ var errorUtil;
 
 // ../../node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path7, key) {
+  constructor(parent, value, path8, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path7;
+    this._path = path8;
     this._key = key;
   }
   get path() {
@@ -34991,11 +35056,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path7) {
-  if (path7.length === 0) {
+function getDotPath(path8) {
+  if (path8.length === 0) {
     return "object root";
   }
-  return path7.reduce((acc, seg, index) => {
+  return path8.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -40873,6 +40938,451 @@ async function runMcpServer(client) {
   await server.connect(new StdioServerTransport());
 }
 
+// src/node.ts
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { appendFile, chmod as chmod2, copyFile, mkdir as mkdir2, readdir, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
+import os2 from "node:os";
+import path6 from "node:path";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+var realSys = {
+  async exec(cmd, args, opts = {}) {
+    const { stdout, stderr } = await execFileAsync(cmd, args, {
+      cwd: opts.cwd,
+      env: opts.env ?? process.env,
+      timeout: opts.timeoutMs ?? 6e4,
+      // A hung claude ignores SIGTERM.
+      killSignal: "SIGKILL",
+      maxBuffer: 10 * 1024 * 1024
+    });
+    return { stdout: String(stdout), stderr: String(stderr) };
+  },
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+};
+function nodePaths(env = process.env) {
+  const home = env.HOME || os2.homedir();
+  const config2 = env.REV_NODE_CONFIG || path6.join(env.XDG_CONFIG_HOME || path6.join(home, ".config"), "rev", "node.json");
+  const dir = path6.dirname(config2);
+  return {
+    home,
+    config: config2,
+    registry: path6.join(dir, "node-workspaces.json"),
+    agents: path6.join(dir, "agents"),
+    defaultRoot: path6.join(home, "rev-workspaces")
+  };
+}
+async function readJson(file2) {
+  try {
+    return JSON.parse(await readFile2(file2, "utf8"));
+  } catch {
+    return null;
+  }
+}
+async function writePrivate(file2, data) {
+  await mkdir2(path6.dirname(file2), { recursive: true, mode: 448 });
+  await writeFile2(file2, JSON.stringify(data, null, 2) + "\n", { mode: 384 });
+  await chmod2(file2, 384);
+}
+var loadNodeConfig = (env = process.env) => readJson(nodePaths(env).config);
+var sessionName = workspaceSession;
+var shellQuote = (s) => /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+var errorText = (e) => {
+  const err = e;
+  return (err.stderr?.trim() || err.message || String(e)).split("\n").slice(-5).join("\n").slice(0, 2e3);
+};
+var START_PROMPT = "You are the Rev agent for this workspace. Using the Rev tools and the rev:workflow skill, list the Rev tasks assigned to you and work through them one at a time: start each one, do the work in this folder, and deliver it with a review kit (or the next round of its review). When none are left, say so and wait: a message arrives here when a new task is assigned to you.";
+var STARTUP_ANSWERS = ["Yes, I trust this folder", "Yes, I accept"];
+var STUCK_HINT = process.platform === "darwin" ? " On macOS this usually means it is waiting for a privacy permission: Claude Code reads a file on an external volume or in Desktop, Documents or Downloads (a skill, say), and background services have no access there. Allow node under System Settings \u2192 Privacy & Security (Files and Folders, or Full Disk Access), or run the node from a terminal instead: tmux new -d -s rev-node '~/.local/bin/rev node run'." : "";
+async function detectTools(sys) {
+  const version2 = async (cmd, args) => {
+    try {
+      const { stdout, stderr } = await sys.exec(cmd, args, { timeoutMs: 2e4 });
+      return ((stdout || stderr).trim().split("\n")[0] ?? "").slice(0, 200) || cmd;
+    } catch {
+      return null;
+    }
+  };
+  const [git, tmux, claude] = await Promise.all([version2("git", ["--version"]), version2("tmux", ["-V"]), version2("claude", ["--version"])]);
+  return { node: process.version, git, tmux, claude };
+}
+var NodeRunner = class {
+  constructor(cfg, sys = realSys, env = process.env, log = (l) => console.log(`${(/* @__PURE__ */ new Date()).toISOString()} ${l}`)) {
+    this.cfg = cfg;
+    this.sys = sys;
+    this.env = env;
+    this.log = log;
+    this.api = new RevApi(cfg.url, cfg.token);
+    this.paths = nodePaths(env);
+  }
+  cfg;
+  sys;
+  env;
+  log;
+  api;
+  paths;
+  tools = null;
+  /** Open tasks seen per running workspace, to notice new assignments. */
+  seen = /* @__PURE__ */ new Map();
+  async capabilities() {
+    if (!this.tools || Date.now() - this.tools.at > 10 * 6e4) this.tools = { at: Date.now(), value: await detectTools(this.sys) };
+    return this.tools.value;
+  }
+  async registry() {
+    return await readJson(this.paths.registry) ?? {};
+  }
+  saveRegistry(r) {
+    return writePrivate(this.paths.registry, r);
+  }
+  tmux(args) {
+    return this.sys.exec("tmux", args, { env: this.env, timeoutMs: 15e3 });
+  }
+  /** Runs one job; the result is reported to Rev. */
+  async handle(job) {
+    this.log(`job ${job.kind} ${job.payload.name}`);
+    try {
+      const result = await this.run(job);
+      await this.api.reportJob(job.id, { ok: true, ...result });
+      this.log(`job ${job.kind} ${job.payload.name}: done`);
+    } catch (e) {
+      const error62 = errorText(e);
+      this.log(`job ${job.kind} ${job.payload.name} failed: ${error62}`);
+      await this.api.reportJob(job.id, { ok: false, error: error62 });
+    }
+  }
+  run(job) {
+    switch (job.kind) {
+      case "workspace.create":
+        return this.createWorkspace(job);
+      case "session.start":
+        return this.startSession(job).then(() => ({}));
+      case "session.stop":
+        return this.stopSession(job).then(() => ({}));
+      default:
+        throw new Error(`This version of rev (${VERSION}) does not know the job "${job.kind}"; update it`);
+    }
+  }
+  async createWorkspace(job) {
+    if (!job.workspaceId) throw new Error("The job has no workspace");
+    const name2 = workspaceName.parse(job.payload.name);
+    const root = path6.resolve(this.cfg.workspaceRoot);
+    const dir = path6.join(root, name2);
+    if (path6.dirname(dir) !== root) throw new Error(`Refusing to create ${dir} outside ${root}`);
+    await mkdir2(root, { recursive: true });
+    if (existsSync(dir) && (await readdir(dir)).length) throw new Error(`${dir} already exists and is not empty`);
+    const gitEnv = { ...this.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: this.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes" };
+    try {
+      if (job.payload.repoUrl) {
+        const url2 = gitUrl.parse(job.payload.repoUrl);
+        await this.sys.exec("git", ["clone", "--", url2, dir], { env: gitEnv, timeoutMs: 15 * 6e4 }).catch((e) => {
+          throw new Error(`git clone failed: ${errorText(e)}`);
+        });
+      } else {
+        await mkdir2(dir, { recursive: true });
+        await this.sys.exec("git", ["init", "-q"], { cwd: dir, env: gitEnv }).catch(() => void 0);
+      }
+      const grant = await this.api.createWorkspaceAgent(job.workspaceId);
+      const agentConfig = path6.join(this.paths.agents, `${job.workspaceId}.json`);
+      await writePrivate(agentConfig, { url: this.cfg.url, token: grant.token });
+      await this.wireClaude(dir, agentConfig);
+      const reg = await this.registry();
+      reg[job.workspaceId] = { name: name2, path: dir, agentConfig, agentName: grant.agent.name };
+      await this.saveRegistry(reg);
+      this.log(`workspace ${name2} at ${dir}, agent ${grant.agent.name}`);
+    } catch (e) {
+      await rm(dir, { recursive: true, force: true });
+      throw e;
+    }
+    return { path: dir };
+  }
+  /** Points Claude Code in the workspace at its agent: Rev plugin on, its own REV_CONFIG, Rev tools allowed. */
+  async wireClaude(dir, agentConfig) {
+    if ((await this.capabilities()).claude) {
+      for (const args of [
+        ["plugin", "marketplace", "add", "vibotaku/Rev"],
+        ["plugin", "marketplace", "update", "vibotaku"],
+        ["plugin", "install", "rev@vibotaku", "--scope", "local"]
+      ]) {
+        await this.sys.exec("claude", args, { cwd: dir, env: this.env, timeoutMs: 9e4 }).catch((e) => {
+          const timedOut = e.killed;
+          this.log(`warning: claude ${args.join(" ")} ${timedOut ? "did not finish in 90 s." + STUCK_HINT : `failed: ${errorText(e)}`}`);
+        });
+      }
+    }
+    const file2 = path6.join(dir, ".claude", "settings.local.json");
+    const settings = await readJson(file2) ?? {};
+    settings.enabledPlugins = { ...settings.enabledPlugins, "rev@vibotaku": true };
+    settings.env = { ...settings.env, REV_CONFIG: agentConfig };
+    settings.permissions = { ...settings.permissions, allow: [.../* @__PURE__ */ new Set([...settings.permissions?.allow ?? [], "mcp__plugin_rev_rev"])] };
+    await mkdir2(path6.dirname(file2), { recursive: true });
+    await writeFile2(file2, JSON.stringify(settings, null, 2) + "\n");
+    const exclude = path6.join(dir, ".git", "info", "exclude");
+    if (existsSync(path6.join(dir, ".git"))) {
+      const current = await readFile2(exclude, "utf8").catch(() => "") || "";
+      if (!current.split("\n").includes(".claude/settings.local.json")) {
+        await mkdir2(path6.dirname(exclude), { recursive: true });
+        await appendFile(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}.claude/settings.local.json
+`);
+      }
+    }
+  }
+  async entry(workspaceId) {
+    const e = workspaceId ? (await this.registry())[workspaceId] : void 0;
+    if (!e) throw new Error("This node has no record of that workspace");
+    return e;
+  }
+  /** Whether the session exists, and whether its program has exited (kept by remain-on-exit). */
+  async pane(session) {
+    try {
+      const dead = (await this.tmux(["display-message", "-p", "-t", session, "#{pane_dead}"])).stdout.trim();
+      const text2 = (await this.tmux(["capture-pane", "-p", "-t", session])).stdout;
+      return { alive: dead !== "1", text: text2 };
+    } catch {
+      return null;
+    }
+  }
+  async startSession(job) {
+    const e = await this.entry(job.workspaceId);
+    const tools = await this.capabilities();
+    if (!tools.tmux) throw new Error("tmux is not installed on this node");
+    if (!tools.claude) throw new Error("Claude Code (claude) is not installed on this node");
+    const session = sessionName(e.name);
+    const existing = await this.pane(session);
+    if (existing?.alive) return;
+    if (existing) await this.tmux(["kill-session", "-t", session]);
+    const command = ["claude", ...this.cfg.claudeArgs, START_PROMPT].map(shellQuote).join(" ");
+    await this.tmux([
+      "new-session",
+      "-d",
+      "-s",
+      session,
+      "-x",
+      "200",
+      "-y",
+      "50",
+      "-c",
+      e.path,
+      "-e",
+      `REV_CONFIG=${e.agentConfig}`,
+      command,
+      ";",
+      "set-option",
+      "-t",
+      session,
+      "remain-on-exit",
+      "on"
+    ]);
+    let started = false;
+    for (let i = 0; i < 60 && !started; i++) {
+      await this.sys.sleep(1e3);
+      const pane = await this.pane(session);
+      if (!pane || !pane.alive) {
+        if (pane) await this.tmux(["kill-session", "-t", session]).catch(() => void 0);
+        const lines = pane?.text.split("\n").filter((l) => l.trim()).slice(-8).join("\n");
+        throw new Error(`Claude Code exited right after starting${lines ? `:
+${lines}` : ""}`);
+      }
+      const answer = STARTUP_ANSWERS.find((a) => pane.text.includes(a));
+      if (answer) {
+        const selected = pane.text.split("\n").find((l) => l.includes("\u276F"));
+        await this.tmux(["send-keys", "-t", session, selected?.includes(answer) ? "Enter" : "Down"]);
+        continue;
+      }
+      started = /Claude Code v\d/.test(pane.text);
+    }
+    if (!started) {
+      await this.tmux(["kill-session", "-t", session]).catch(() => void 0);
+      throw new Error(`Claude Code did not start within 60 s.${STUCK_HINT}`);
+    }
+    this.log(`session ${session} started in ${e.path}`);
+  }
+  async stopSession(job) {
+    const reg = await this.registry();
+    const known = job.workspaceId ? reg[job.workspaceId] : void 0;
+    const name2 = known?.name ?? workspaceName.parse(job.payload.name);
+    await this.tmux(["kill-session", "-t", sessionName(name2)]).catch((e) => {
+      if (!/can't find session|no server running|error connecting/i.test(errorText(e))) throw e;
+    });
+    if (!job.workspaceId) {
+      for (const [id, entry] of Object.entries(reg)) {
+        if (entry.name !== name2) continue;
+        await rm(entry.agentConfig, { force: true });
+        delete reg[id];
+      }
+      await this.saveRegistry(reg);
+    }
+  }
+  /** Workspaces whose Claude Code session is running. */
+  async runningSessions() {
+    let out = "";
+    try {
+      out = (await this.tmux(["list-panes", "-a", "-F", "#{session_name}	#{pane_dead}"])).stdout;
+    } catch {
+      return [];
+    }
+    const alive = new Set(
+      out.split("\n").map((l) => l.split("	")).filter(([, dead]) => dead === "0").map(([name2]) => name2)
+    );
+    return Object.entries(await this.registry()).filter(([, e]) => alive.has(sessionName(e.name))).map(([id]) => id);
+  }
+  /** Tells a running session about tasks newly assigned to its agent. */
+  async nudge(running) {
+    const reg = await this.registry();
+    for (const id of running) {
+      const e = reg[id];
+      const creds = e && await readJson(e.agentConfig);
+      if (!e || !creds) continue;
+      let open2;
+      try {
+        open2 = await new RevApi(creds.url, creds.token).myTasks(["todo"]);
+      } catch {
+        continue;
+      }
+      const before = this.seen.get(id);
+      this.seen.set(id, new Set(open2.map((t) => t.id)));
+      if (!before) continue;
+      for (const t of open2.filter((t2) => !before.has(t2.id))) {
+        const title = t.title.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+        const text2 = `New Rev task assigned to you: ${t.ref} "${title}". Work on it with the rev:workflow skill.`;
+        await this.tmux(["send-keys", "-t", sessionName(e.name), "-l", text2]);
+        await this.tmux(["send-keys", "-t", sessionName(e.name), "Enter"]);
+        this.log(`told ${sessionName(e.name)} about ${t.ref}`);
+      }
+    }
+    for (const id of [...this.seen.keys()]) if (!running.includes(id)) this.seen.delete(id);
+  }
+  async facts() {
+    return {
+      hostname: os2.hostname(),
+      platform: process.platform,
+      arch: process.arch,
+      version: VERSION,
+      workspaceRoot: path6.resolve(this.cfg.workspaceRoot),
+      capabilities: await this.capabilities()
+    };
+  }
+  async checkIn() {
+    const sessions = await this.runningSessions();
+    await this.api.reportState({ ...await this.facts(), sessions });
+    await this.nudge(sessions);
+  }
+  /** The service loop: check in every 30 s, and run jobs as they arrive. */
+  async serve(signal) {
+    this.log(`rev node ${VERSION}: ${this.cfg.name} serving ${this.cfg.url} (workspaces in ${this.cfg.workspaceRoot})`);
+    let lastCheckIn = 0;
+    let delay = 1e3;
+    while (!signal?.aborted) {
+      try {
+        if (Date.now() - lastCheckIn > 3e4) {
+          await this.checkIn();
+          lastCheckIn = Date.now();
+        }
+        const job = await this.api.nextJob(25);
+        delay = 1e3;
+        if (job) {
+          await this.handle(job);
+          lastCheckIn = 0;
+        }
+      } catch (e) {
+        const rejected = e instanceof RevApiError && e.status === 401;
+        this.log(rejected ? "Rev rejected this node's token (disabled or removed in Rev?); retrying in a minute" : `error: ${errorText(e)}`);
+        await this.sys.sleep(rejected ? 6e4 : delay);
+        delay = Math.min(delay * 2, 6e4);
+      }
+    }
+  }
+};
+var LABEL = "com.vibotaku.rev-node";
+var xml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+async function installService(env, sys, scriptPath) {
+  const { home } = nodePaths(env);
+  const bin = path6.join(home, ".local", "share", "rev", "rev.mjs");
+  if (path6.resolve(scriptPath) !== bin) {
+    await mkdir2(path6.dirname(bin), { recursive: true });
+    await copyFile(scriptPath, bin);
+    await chmod2(bin, 493);
+  }
+  const vars = { PATH: env.PATH ?? "/usr/bin:/bin", HOME: home };
+  if (env.REV_NODE_CONFIG) vars.REV_NODE_CONFIG = env.REV_NODE_CONFIG;
+  if (env.XDG_CONFIG_HOME) vars.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME;
+  if (process.platform === "darwin") {
+    const file2 = path6.join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
+    const logs = path6.join(home, "Library", "Logs", "rev-node.log");
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(process.execPath)}</string>
+    <string>${xml(bin)}</string>
+    <string>node</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+${Object.entries(vars).map(([k, v]) => `    <key>${k}</key><string>${xml(v)}</string>`).join("\n")}
+  </dict>
+  <key>WorkingDirectory</key><string>${xml(home)}</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${xml(logs)}</string>
+  <key>StandardErrorPath</key><string>${xml(logs)}</string>
+</dict>
+</plist>
+`;
+    await mkdir2(path6.dirname(file2), { recursive: true });
+    await mkdir2(path6.dirname(logs), { recursive: true });
+    await writeFile2(file2, plist);
+    const domain2 = `gui/${process.getuid()}`;
+    await sys.exec("launchctl", ["bootout", `${domain2}/${LABEL}`]).catch(() => void 0);
+    await sys.exec("launchctl", ["bootstrap", domain2, file2]);
+    return { kind: "launchd", file: file2, logs };
+  }
+  if (process.platform === "linux") {
+    const file2 = path6.join(env.XDG_CONFIG_HOME || path6.join(home, ".config"), "systemd", "user", "rev-node.service");
+    const quote = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    const unit2 = `[Unit]
+Description=Rev node (creates workspaces and runs agents for Rev)
+After=network-online.target
+
+[Service]
+ExecStart=${quote(process.execPath)} ${quote(bin)} node run
+${Object.entries(vars).map(([k, v]) => `Environment=${quote(`${k}=${v}`)}`).join("\n")}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`;
+    await mkdir2(path6.dirname(file2), { recursive: true });
+    await writeFile2(file2, unit2);
+    await sys.exec("systemctl", ["--user", "daemon-reload"]);
+    await sys.exec("systemctl", ["--user", "enable", "rev-node.service"]);
+    await sys.exec("systemctl", ["--user", "restart", "rev-node.service"]);
+    return { kind: "systemd", file: file2, logs: "journalctl --user -u rev-node -f" };
+  }
+  throw new Error(`Running rev node as a service is supported on macOS and Linux; on ${process.platform}, run \`rev node run\` yourself`);
+}
+async function uninstallService(env, sys) {
+  const { home } = nodePaths(env);
+  if (process.platform === "darwin") {
+    const file2 = path6.join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
+    await sys.exec("launchctl", ["bootout", `gui/${process.getuid()}/${LABEL}`]).catch(() => void 0);
+    await rm(file2, { force: true });
+    return file2;
+  }
+  if (process.platform === "linux") {
+    const file2 = path6.join(env.XDG_CONFIG_HOME || path6.join(home, ".config"), "systemd", "user", "rev-node.service");
+    await sys.exec("systemctl", ["--user", "disable", "--now", "rev-node.service"]).catch(() => void 0);
+    await rm(file2, { force: true });
+    await sys.exec("systemctl", ["--user", "daemon-reload"]).catch(() => void 0);
+    return file2;
+  }
+  throw new Error(`No service to remove on ${process.platform}`);
+}
+
 // src/program.ts
 var defaultIo = {
   out: (t) => process.stdout.write(t.endsWith("\n") ? t : `${t}
@@ -40922,8 +41432,8 @@ Saved to ${file2}`
       }
       const key = (opts.key === "-" ? await readStdin() : opts.key ?? io.env.REV_ENROLL_KEY ?? "").trim();
       if (!key) throw new Error("No enrollment key: pass --key <key>, --key - (stdin), or set REV_ENROLL_KEY.");
-      const host = os2.hostname().split(".")[0] || "host";
-      const name2 = opts.name ?? `${os2.userInfo().username}@${host}`;
+      const host = os3.hostname().split(".")[0] || "host";
+      const name2 = opts.name ?? `${os3.userInfo().username}@${host}`;
       const description = opts.description ?? `Registered from ${host} (${process.platform} ${process.arch}) with rev ${VERSION}`;
       const baseUrl = opts.url.replace(/\/+$/, "");
       const reg = await RevApi.register(baseUrl, { key, name: name2, description });
@@ -40957,8 +41467,8 @@ config: ${configPath(io.env)}`);
   const review = program2.command("review").description("Create review kits, submit new rounds, read feedback");
   review.command("create").description("Upload screenshots/videos as a review kit and publish it").argument("<files...>", "images (png/jpg/webp/gif) and videos (mp4/webm/mov/mkv)").requiredOption("-p, --project <key>", "project key, e.g. WEB").requiredOption("-t, --title <title>", "review title").option("-d, --description <markdown>", "what changed and how to verify it").option("--description-file <file>", "read the description from a markdown file").option("--task <ref>", "task this review delivers, e.g. WEB-12").option("--caption <text>", "caption for the next file (repeat once per file, in order)", collect).option("--caption-each", "caption each file with its file name").option("--draft", "keep the review as a draft instead of publishing").action(async (files, opts, cmd) => {
     const client = await api();
-    const description = opts.descriptionFile ? await readFile2(opts.descriptionFile, "utf8") : opts.description ?? "";
-    const captions = opts.captionEach ? files.map((f) => path6.basename(f, path6.extname(f))) : opts.caption ?? [];
+    const description = opts.descriptionFile ? await readFile3(opts.descriptionFile, "utf8") : opts.description ?? "";
+    const captions = opts.captionEach ? files.map((f) => path7.basename(f, path7.extname(f))) : opts.caption ?? [];
     const result = await createReviewKit(client, {
       project: opts.project,
       title: opts.title,
@@ -40979,8 +41489,8 @@ ${url2}`
   });
   review.command("round").description("Submit the next round of a review after addressing its feedback (new screenshots/videos)").argument("<ref>", "review to continue, e.g. WEB-R3").argument("<files...>", "images (png/jpg/webp/gif) and videos (mp4/webm/mov/mkv)").option("-n, --notes <markdown>", "what changed since the previous round and how to verify it").option("--notes-file <file>", "read the notes from a markdown file").option("--task <ref>", "task this round addresses (repeatable; default: your open tasks from this review)", collect).option("--caption <text>", "caption for the next file (repeat once per file, in order)", collect).option("--caption-each", "caption each file with its file name").action(async (ref, files, opts, cmd) => {
     const client = await api();
-    const notes = opts.notesFile ? await readFile2(opts.notesFile, "utf8") : opts.notes ?? "";
-    const captions = opts.captionEach ? files.map((f) => path6.basename(f, path6.extname(f))) : opts.caption ?? [];
+    const notes = opts.notesFile ? await readFile3(opts.notesFile, "utf8") : opts.notes ?? "";
+    const captions = opts.captionEach ? files.map((f) => path7.basename(f, path7.extname(f))) : opts.caption ?? [];
     const { review: r, round } = await submitReviewRound(client, ref, {
       notes,
       files,
@@ -41020,11 +41530,11 @@ ${url2}`
     const t = await client.task(ref);
     const saved = [];
     if (opts.saveSnapshots) {
-      await mkdir2(opts.saveSnapshots, { recursive: true });
+      await mkdir3(opts.saveSnapshots, { recursive: true });
       for (const s of await fetchSnapshots(client, t.sourceComments, Infinity, Infinity)) {
         const id = s.kind === "frames" ? `${s.comment.markOf ?? s.comment.id}-frames` : s.comment.id;
-        const file2 = path6.join(opts.saveSnapshots, `${t.ref}-${id}${s.mime === "image/jpeg" ? ".jpg" : ".png"}`);
-        await writeFile2(file2, s.data);
+        const file2 = path7.join(opts.saveSnapshots, `${t.ref}-${id}${s.mime === "image/jpeg" ? ".jpg" : ".png"}`);
+        await writeFile3(file2, s.data);
         saved.push(file2);
       }
     }
@@ -41048,6 +41558,91 @@ ${url2}`
   task.command("comment").description("Post a comment on a task").argument("<ref>").argument("<text>", "comment text (markdown)").action(async (ref, text2, _opts, cmd) => {
     const t = await (await api()).commentOnTask(ref, text2);
     emit(cmd, t, () => `Commented on ${t.ref}`);
+  });
+  const sys = io.sys ?? realSys;
+  const node2 = program2.command("node").description("Make this computer a Rev node: Rev can then create workspaces with agents here, and start Claude Code in them");
+  node2.command("install").description("Register this computer as a node (once) and install the background service that runs it").option("--url <url>", "Rev base URL, e.g. https://rev.example.com").option("--key <key>", "enrollment key (rev_enroll_...); `-` reads it from stdin; defaults to $REV_ENROLL_KEY").option("--name <name>", "node name shown in Rev (default: the host name)").option("--root <dir>", "folder to create workspaces in (default: ~/rev-workspaces)").option(
+    "--claude-args <args>",
+    'extra arguments for claude in agent sessions, e.g. "--permission-mode acceptEdits" (default: none; your Claude Code settings apply)'
+  ).option("--no-service", "only register; run `rev node run` yourself").option("--force", "register again as a new node even if this computer already is one").action(
+    async (opts, cmd) => {
+      const paths = nodePaths(io.env);
+      let cfg = await loadNodeConfig(io.env);
+      let registered = false;
+      if (!cfg || opts.force) {
+        if (!opts.url) throw new Error("Pass --url <Rev base URL> to register this computer as a node.");
+        const key = (opts.key === "-" ? await readStdin() : opts.key ?? io.env.REV_ENROLL_KEY ?? "").trim();
+        if (!key) throw new Error("No enrollment key: pass --key <key>, --key - (stdin), or set REV_ENROLL_KEY.");
+        const baseUrl = opts.url.replace(/\/+$/, "");
+        const draft = {
+          url: baseUrl,
+          name: opts.name ?? (os3.hostname().split(".")[0] || "node"),
+          workspaceRoot: path7.resolve(opts.root ?? paths.defaultRoot),
+          claudeArgs: opts.claudeArgs?.split(/\s+/).filter(Boolean) ?? []
+        };
+        const runner = new NodeRunner({ ...draft, token: "", nodeId: "" }, sys, io.env, () => void 0);
+        const reg = await RevApi.registerNode(baseUrl, { key, name: draft.name, ...await runner.facts() });
+        cfg = { ...draft, token: reg.token, nodeId: reg.node.id };
+        registered = true;
+      } else {
+        if (opts.root) cfg.workspaceRoot = path7.resolve(opts.root);
+        if (opts.claudeArgs !== void 0) cfg.claudeArgs = opts.claudeArgs.split(/\s+/).filter(Boolean);
+      }
+      await writePrivate(paths.config, cfg);
+      await mkdir3(cfg.workspaceRoot, { recursive: true });
+      const tools = await detectTools(sys);
+      const service = opts.service ? await installService(io.env, sys, process.argv[1] ?? "") : null;
+      const missing = ["git", "tmux", "claude"].filter((t) => !tools[t]);
+      emit(
+        cmd,
+        { node: { id: cfg.nodeId, name: cfg.name, url: cfg.url }, registered, workspaceRoot: cfg.workspaceRoot, tools, service },
+        () => [
+          registered ? `Registered ${cfg.name} as a node on ${cfg.url}` : `${cfg.name} is already a node on ${cfg.url}`,
+          `Workspaces: ${cfg.workspaceRoot}`,
+          `Claude Code arguments: ${cfg.claudeArgs.join(" ") || "(none; your Claude Code settings apply)"}`,
+          `Tools: ${["git", "tmux", "claude"].map((t) => `${t} ${tools[t] ? "yes" : "MISSING"}`).join(", ")}`,
+          ...missing.length ? [`Install ${missing.join(", ")} to let Rev ${missing.includes("git") ? "clone repositories and " : ""}start agents here.`] : [],
+          service ? `Service: ${service.kind} (${service.file}); logs: ${service.logs}` : "No service installed: run `rev node run` to serve Rev.",
+          ...service?.kind === "systemd" ? ["To keep it running while you are logged out: loginctl enable-linger $USER"] : [],
+          ...service?.kind === "launchd" ? [
+            "macOS: if Claude Code reads files on an external volume or in Desktop, Documents or Downloads, allow node when macOS asks (System Settings \u2192 Privacy & Security)."
+          ] : [],
+          `Saved to ${paths.config}`,
+          "Open Rev \u2192 Nodes to create workspaces here."
+        ].join("\n")
+      );
+    }
+  );
+  node2.command("run").description("Serve Rev in the foreground (what the background service runs)").action(async () => {
+    const cfg = await loadNodeConfig(io.env);
+    if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
+    const stop = new AbortController();
+    for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => stop.abort());
+    await new NodeRunner(cfg, sys, io.env).serve(stop.signal);
+  });
+  node2.command("status").description("Show this node's settings, tools and workspaces").action(async (_opts, cmd) => {
+    const cfg = await loadNodeConfig(io.env);
+    if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
+    const runner = new NodeRunner(cfg, sys, io.env, () => void 0);
+    const [facts, running] = await Promise.all([runner.facts(), runner.runningSessions()]);
+    const registry2 = JSON.parse(await readFile3(nodePaths(io.env).registry, "utf8").catch(() => "{}"));
+    const workspaces = Object.entries(registry2).map(([id, w]) => ({ id, ...w, running: running.includes(id) }));
+    const { token: _token, ...safe } = cfg;
+    emit(
+      cmd,
+      { node: safe, tools: facts.capabilities, workspaces },
+      () => [
+        `${cfg.name} on ${cfg.url}`,
+        `Workspaces folder: ${cfg.workspaceRoot}`,
+        `Claude Code arguments: ${cfg.claudeArgs.join(" ") || "(none)"}`,
+        `Tools: ${["git", "tmux", "claude"].map((t) => `${t} ${facts.capabilities[t] ?? "MISSING"}`).join(" \xB7 ")}`,
+        ...workspaces.length ? workspaces.map((w) => `  ${w.name.padEnd(20)} ${w.running ? "running" : "stopped"}  ${w.agentName}  ${w.path}`) : ["No workspaces yet."]
+      ].join("\n")
+    );
+  });
+  node2.command("uninstall").description("Remove the background service (the node stays registered; remove it in Rev \u2192 Nodes)").action(async (_opts, cmd) => {
+    const file2 = await uninstallService(io.env, sys);
+    emit(cmd, { removed: file2 }, () => `Removed the service (${file2}). Workspaces and their folders are untouched.`);
   });
   program2.command("mcp").description("Run a Model Context Protocol server on stdio (e.g. `claude mcp add rev -- rev mcp`)").action(async () => {
     await runMcpServer(api);

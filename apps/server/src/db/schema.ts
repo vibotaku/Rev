@@ -9,6 +9,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  boolean,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -20,12 +21,17 @@ import type {
   AssetStatus,
   CommentStatus,
   GlobalRole,
+  NodeCapabilities,
+  NodeJob,
+  NodeJobKind,
+  NodeJobStatus,
   ProjectRole,
   ReviewStatus,
   TaskActivityInfo,
   TaskPriority,
   TaskStatus,
   UserKind,
+  WorkspaceStatus,
 } from "@rev/shared";
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
@@ -363,4 +369,79 @@ export const reviewComments = pgTable(
     index("review_comments_task_idx").on(t.taskId),
     index("review_comments_mark_of_idx").on(t.markOf),
   ],
+);
+
+/**
+ * A computer running `rev node`: it creates workspaces and their agents, and starts and
+ * stops Claude Code sessions in them, on request from its owner or an admin. It only
+ * ever runs the fixed jobs in NODE_JOB_KINDS.
+ */
+export const nodes = pgTable(
+  "nodes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    /** The human the node belongs to. Agents it creates are linked to them. */
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    tokenPrefix: text("token_prefix").notNull(),
+    enrolledVia: uuid("enrolled_via").references(() => enrollmentKeys.id, { onDelete: "set null" }),
+    hostname: text("hostname").notNull().default(""),
+    platform: text("platform").notNull().default(""),
+    arch: text("arch").notNull().default(""),
+    version: text("version").notNull().default(""),
+    workspaceRoot: text("workspace_root").notNull().default(""),
+    capabilities: jsonb("capabilities").$type<NodeCapabilities>(),
+    lastSeenAt: ts("last_seen_at"),
+    disabledAt: ts("disabled_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("nodes_owner_idx").on(t.ownerId)],
+);
+
+/** A folder on a node with its own agent, working on one project. */
+export const workspaces = pgTable(
+  "workspaces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    nodeId: uuid("node_id")
+      .notNull()
+      .references(() => nodes.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+    repoUrl: text("repo_url"),
+    /** Reported by the node once the folder exists. */
+    path: text("path"),
+    agentId: uuid("agent_id").references(() => users.id, { onDelete: "set null" }),
+    status: text("status").$type<WorkspaceStatus>().notNull().default("pending"),
+    error: text("error"),
+    /** Whether the node last reported a running Claude Code session for it. */
+    sessionRunning: boolean("session_running").notNull().default(false),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("workspaces_node_name_idx").on(t.nodeId, t.name)],
+);
+
+/** Work queued for a node, handed out in order. */
+export const nodeJobs = pgTable(
+  "node_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    nodeId: uuid("node_id")
+      .notNull()
+      .references(() => nodes.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+    kind: text("kind").$type<NodeJobKind>().notNull(),
+    payload: jsonb("payload").$type<NodeJob["payload"]>().notNull(),
+    status: text("status").$type<NodeJobStatus>().notNull().default("queued"),
+    error: text("error"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    startedAt: ts("started_at"),
+    finishedAt: ts("finished_at"),
+  },
+  (t) => [index("node_jobs_node_status_idx").on(t.nodeId, t.status, t.createdAt), index("node_jobs_workspace_idx").on(t.workspaceId)],
 );

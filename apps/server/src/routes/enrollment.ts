@@ -24,6 +24,34 @@ function isActive(k: KeyRow, now = new Date()) {
   return !k.revokedAt && (!k.expiresAt || k.expiresAt > now) && (k.maxUses == null || k.uses < k.maxUses);
 }
 
+/** The enrollment key for `raw` and its creator, if the key can register anything right now. */
+export async function findUsableKey(db: Db, raw: string) {
+  const [key] = await db.select().from(enrollmentKeys).where(eq(enrollmentKeys.keyHash, sha256(raw)));
+  if (!key) throw new HttpError(401, "unauthorized", "Invalid enrollment key");
+  if (key.revokedAt) throw forbidden("This enrollment key has been revoked");
+  if (key.expiresAt && key.expiresAt <= new Date()) throw forbidden("This enrollment key has expired");
+  if (key.maxUses != null && key.uses >= key.maxUses) throw forbidden("This enrollment key has no registrations left");
+  const [owner] = await db.select().from(users).where(eq(users.id, key.createdBy));
+  if (!owner || owner.disabledAt) throw forbidden("The owner of this enrollment key is disabled");
+  return { key, owner };
+}
+
+/** Claims one use of a key atomically, so concurrent registrations cannot exceed maxUses. */
+export async function claimKeyUse(db: Db, keyId: string) {
+  const [claimed] = await db
+    .update(enrollmentKeys)
+    .set({ uses: sql`${enrollmentKeys.uses} + 1`, lastUsedAt: new Date() })
+    .where(
+      and(
+        eq(enrollmentKeys.id, keyId),
+        isNull(enrollmentKeys.revokedAt),
+        sql`(${enrollmentKeys.maxUses} is null or ${enrollmentKeys.uses} < ${enrollmentKeys.maxUses})`,
+      ),
+    )
+    .returning();
+  if (!claimed) throw forbidden("This enrollment key has no registrations left");
+}
+
 /** Agent names are unique per linked human so people can tell their agents apart. */
 export async function assertAgentNameFree(db: Db, ownerId: string, name: string) {
   const [taken] = await db
@@ -136,32 +164,13 @@ export default async function enrollmentRoutes(app: FastifyInstance, ctx: AppCon
   /** Self-registration: an agent holding an enrollment key creates its own account and token. */
   app.post("/api/agents/register", { config: registerLimit }, async (req): Promise<AgentRegistration> => {
     const body = parse(agentRegisterBody, req.body);
-    const [found] = await ctx.db.select().from(enrollmentKeys).where(eq(enrollmentKeys.keyHash, sha256(body.key)));
-    if (!found) throw new HttpError(401, "unauthorized", "Invalid enrollment key");
-    if (found.revokedAt) throw forbidden("This enrollment key has been revoked");
-    if (found.expiresAt && found.expiresAt <= new Date()) throw forbidden("This enrollment key has expired");
-    if (found.maxUses != null && found.uses >= found.maxUses) throw forbidden("This enrollment key has no registrations left");
-
-    const [owner] = await ctx.db.select().from(users).where(eq(users.id, found.createdBy));
-    if (!owner || owner.disabledAt) throw forbidden("The owner of this enrollment key is disabled");
+    const { key: found, owner } = await findUsableKey(ctx.db, body.key);
     const ownerActor: Actor = { id: owner.id, name: owner.name, email: owner.email, kind: "human", role: owner.role, ownerId: null };
     await assertAgentNameFree(ctx.db, owner.id, body.name);
 
     const { token, hash, prefix } = newApiToken();
     const result = await ctx.db.transaction(async (tx) => {
-      // Claim a use atomically so concurrent registrations cannot exceed maxUses.
-      const [claimed] = await tx
-        .update(enrollmentKeys)
-        .set({ uses: sql`${enrollmentKeys.uses} + 1`, lastUsedAt: new Date() })
-        .where(
-          and(
-            eq(enrollmentKeys.id, found.id),
-            isNull(enrollmentKeys.revokedAt),
-            sql`(${enrollmentKeys.maxUses} is null or ${enrollmentKeys.uses} < ${enrollmentKeys.maxUses})`,
-          ),
-        )
-        .returning();
-      if (!claimed) throw forbidden("This enrollment key has no registrations left");
+      await claimKeyUse(tx as unknown as Db, found.id);
 
       const [agent] = await tx
         .insert(users)

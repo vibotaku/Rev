@@ -10,7 +10,7 @@ import {
   type ProjectRole,
 } from "@rev/shared";
 import type { AppContext } from "../context";
-import type { Tx } from "../db";
+import type { Db, Tx } from "../db";
 import { projectMembers, projects, reviews, tasks, users } from "../db/schema";
 import { isWriter, loadProject, projectPerms } from "../lib/access";
 import { requireActor, requireHuman, type Actor } from "../lib/auth";
@@ -61,6 +61,20 @@ export async function describeProjects(
   }));
 }
 
+/** Creates a project with `actor` as its owner. */
+export async function createProject(db: Db, actor: Actor, body: { key: string; name: string; description?: string }) {
+  const [existing] = await db.select({ id: projects.id }).from(projects).where(eq(projects.key, body.key));
+  if (existing) throw conflict(`Project key ${body.key} is already taken`);
+  return db.transaction(async (tx) => {
+    const [p] = await tx
+      .insert(projects)
+      .values({ key: body.key, name: body.name, description: body.description ?? "", createdBy: actor.id })
+      .returning();
+    await tx.insert(projectMembers).values({ projectId: p!.id, userId: actor.id, role: "owner" });
+    return p!;
+  });
+}
+
 export default async function projectRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get("/api/projects", async (req) => {
     const actor = requireActor(req);
@@ -81,17 +95,7 @@ export default async function projectRoutes(app: FastifyInstance, ctx: AppContex
 
   app.post("/api/projects", async (req) => {
     const actor = requireHuman(req, "create projects");
-    const body = parse(projectCreateBody, req.body);
-    const [existing] = await ctx.db.select({ id: projects.id }).from(projects).where(eq(projects.key, body.key));
-    if (existing) throw conflict(`Project key ${body.key} is already taken`);
-    const project = await ctx.db.transaction(async (tx) => {
-      const [p] = await tx
-        .insert(projects)
-        .values({ key: body.key, name: body.name, description: body.description, createdBy: actor.id })
-        .returning();
-      await tx.insert(projectMembers).values({ projectId: p!.id, userId: actor.id, role: "owner" });
-      return p!;
-    });
+    const project = await createProject(ctx.db, actor, parse(projectCreateBody, req.body));
     return (await describeProjects(ctx, actor, [{ project, role: "owner" }]))[0];
   });
 

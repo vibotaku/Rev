@@ -54,6 +54,18 @@ export type AssetKind = (typeof ASSET_KINDS)[number];
 export const ASSET_STATUSES = ["processing", "ready", "failed"] as const;
 export type AssetStatus = (typeof ASSET_STATUSES)[number];
 
+/** What a node (a computer running `rev node`) can be asked to do. Nothing else is ever sent to it. */
+export const NODE_JOB_KINDS = ["workspace.create", "session.start", "session.stop"] as const;
+export type NodeJobKind = (typeof NODE_JOB_KINDS)[number];
+export const NODE_JOB_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
+export type NodeJobStatus = (typeof NODE_JOB_STATUSES)[number];
+export const WORKSPACE_STATUSES = ["pending", "ready", "failed"] as const;
+export type WorkspaceStatus = (typeof WORKSPACE_STATUSES)[number];
+/** A workspace's Claude Code session, as last reported by its node (or being started/stopped). */
+export type SessionState = "stopped" | "starting" | "running" | "stopping";
+/** A node counts as online if it checked in this recently. */
+export const NODE_ONLINE_MS = 90_000;
+
 /** Upload types accepted for review assets. SVG is excluded on purpose (script injection). */
 export const ACCEPTED_MEDIA: Record<string, AssetKind> = {
   "image/png": "image",
@@ -169,6 +181,62 @@ export const projectCreateBody = z.object({
   name,
   description: z.string().max(5000).default(""),
 });
+
+/** Tools found on a node; null when missing. */
+export const nodeCapabilities = z.object({
+  node: z.string().max(100),
+  git: z.string().max(200).nullable(),
+  tmux: z.string().max(200).nullable(),
+  claude: z.string().max(200).nullable(),
+});
+const nodeFacts = {
+  hostname: z.string().trim().max(255).default(""),
+  platform: z.string().trim().max(50).default(""),
+  arch: z.string().trim().max(50).default(""),
+  version: z.string().trim().max(50).default(""),
+  /** Folder the node creates workspaces in. */
+  workspaceRoot: z.string().trim().max(1000).default(""),
+  capabilities: nodeCapabilities.nullable().default(null),
+};
+/** Sent by `rev node install` (unauthenticated apart from the enrollment key). */
+export const nodeRegisterBody = z.object({ key: z.string().trim().min(10).max(200), name, ...nodeFacts });
+/** A node's periodic check-in: its facts and the workspaces whose Claude Code session is running. */
+export const nodeStateBody = z.object({ ...nodeFacts, sessions: z.array(z.uuid()).max(1000).default([]) });
+export const nodeUpdateBody = z.object({ name: name.optional(), disabled: z.boolean().optional() });
+export const nodeJobResultBody = z.object({
+  ok: z.boolean(),
+  error: z.string().max(5000).optional(),
+  /** workspace.create: where the workspace ended up on the node. */
+  path: z.string().max(1000).optional(),
+});
+
+/** Workspace folder names: also used for the tmux session (`rev-<name>`) and the agent's name. */
+export const workspaceName = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,47}$/, "Use 1-48 lowercase letters, digits, dots, dashes or underscores, starting with a letter or digit")
+  .refine((n) => !/\.\./.test(n) && !n.endsWith("."), "Not a valid folder name");
+/** The tmux session a node runs a workspace's Claude Code in; tmux does not allow dots or colons in names. */
+export const workspaceSession = (name: string) => `rev-${name.replace(/[.:]/g, "_")}`;
+/** Git URLs a node may clone: https, ssh, or scp-style `git@host:path`. */
+export const gitUrl = z
+  .string()
+  .trim()
+  .max(500)
+  .regex(/^(https:\/\/|ssh:\/\/|git@)[^\s]+$/, "Use an https://, ssh:// or git@host:path URL");
+export const workspaceCreateBody = z
+  .object({
+    name: workspaceName,
+    /** An existing project the workspace's agent joins… */
+    projectKey: z.string().trim().toUpperCase().optional(),
+    /** …or a new project to create for it. */
+    newProject: z.object({ key: projectKey, name }).optional(),
+    repoUrl: gitUrl.nullable().default(null),
+    /** Start the agent's Claude Code session once the workspace is ready. */
+    start: z.boolean().default(false),
+  })
+  .refine((b) => !!b.projectKey !== !!b.newProject, { message: "Choose a project or create a new one", path: ["projectKey"] });
 export const projectUpdateBody = z.object({
   name: name.optional(),
   description: z.string().max(5000).optional(),
@@ -448,6 +516,64 @@ export interface AgentRegistration {
   token: string;
   agent: { id: string; name: string; owner: UserSummary };
   projects: { key: string; name: string; role: ProjectRole }[];
+}
+
+export type NodeCapabilities = z.infer<typeof nodeCapabilities>;
+
+export interface WorkspaceInfo {
+  id: string;
+  nodeId: string;
+  name: string;
+  /** Where it lives on the node, once created. */
+  path: string | null;
+  repoUrl: string | null;
+  project: { key: string; name: string } | null;
+  agent: UserSummary | null;
+  status: WorkspaceStatus;
+  error: string | null;
+  session: SessionState;
+  /** Last failed start/stop, if the most recent attempt failed. */
+  sessionError: string | null;
+  createdBy: UserSummary | null;
+  createdAt: string;
+}
+
+export interface NodeInfo {
+  id: string;
+  name: string;
+  owner: UserSummary;
+  hostname: string;
+  platform: string;
+  arch: string;
+  version: string;
+  workspaceRoot: string;
+  capabilities: NodeCapabilities | null;
+  online: boolean;
+  lastSeenAt: string | null;
+  disabled: boolean;
+  createdAt: string;
+  workspaces: WorkspaceInfo[];
+}
+
+export interface NodeRegistration {
+  /** The node's token; only returned once. */
+  token: string;
+  node: { id: string; name: string; owner: UserSummary };
+}
+
+/** A job handed to a node. `payload` is a snapshot taken when the job was queued. */
+export interface NodeJob {
+  id: string;
+  kind: NodeJobKind;
+  workspaceId: string | null;
+  payload: { name: string; repoUrl: string | null; projectKey: string | null; path: string | null };
+}
+
+/** Returned to a node when it creates a workspace's agent; the token is only returned once. */
+export interface NodeAgentGrant {
+  token: string;
+  agent: { id: string; name: string };
+  project: { key: string; name: string } | null;
 }
 
 export interface InviteInfo {

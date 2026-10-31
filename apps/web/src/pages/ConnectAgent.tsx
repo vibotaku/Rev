@@ -12,17 +12,17 @@ import { CreateKey } from "./EnrollmentKeys";
  * Where the enrollment key comes from: a literal key, an OpenBao/Vault KV reference
  * (`bao:<path>#<field>`, mount `secret`, as /rev:setup takes it), or not given yet.
  */
-type KeySource = { kind: "literal"; key: string } | { kind: "bao"; ref: string; path: string; field: string } | { kind: "none" };
+export type KeySource = { kind: "literal"; key: string } | { kind: "bao"; ref: string; path: string; field: string } | { kind: "none" };
 
-function keySource(input: string): KeySource {
+export function keySource(input: string): KeySource {
   const v = input.trim();
   const bao = /^bao:([^#\s]+)#(\S+)$/.exec(v);
   if (bao) return { kind: "bao", ref: v, path: bao[1]!.replace(/^secret\//, ""), field: bao[2]! };
   return v ? { kind: "literal", key: v } : { kind: "none" };
 }
 
-const PLACEHOLDER = "<enrollment key>";
-const installCli = (origin: string) =>
+export const PLACEHOLDER = "<enrollment key>";
+export const installCli = (origin: string) =>
   `mkdir -p ~/.local/bin && curl -fsSL ${origin}/downloads/rev.mjs -o ~/.local/bin/rev && chmod +x ~/.local/bin/rev`;
 
 function registerCommand(origin: string, src: KeySource, rev: string, name: string) {
