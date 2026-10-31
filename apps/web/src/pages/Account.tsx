@@ -30,7 +30,7 @@ export function Account() {
     return (
       <div>
         <PageHeader title="Account" subtitle={user.email} />
-        <div className="mx-auto max-w-xl px-8 py-6">
+        <div className="mx-auto max-w-xl px-4 py-6 md:px-8">
           <Card className="space-y-2 p-5 text-sm">
             <div className="font-medium">{user.name}</div>
             <div className="text-zinc-500">
@@ -46,7 +46,7 @@ export function Account() {
   return (
     <div>
       <PageHeader title="Account" subtitle={user.email} />
-      <div className="mx-auto max-w-xl space-y-6 px-8 py-6">
+      <div className="mx-auto max-w-xl space-y-6 px-4 py-6 md:px-8">
         <Card className="space-y-4 p-5">
           <Field label="Name">
             <Input value={name} onChange={(e) => setName(e.target.value)} />

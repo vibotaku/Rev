@@ -22,6 +22,7 @@ agent ──rev review create──▶ review kit ──humans annotate & commen
 - **Auth and privileges.** Email/password accounts (invite-only) and optional **Active Directory** sign-in over LDAPS, restricted to an AD group, with accounts created on first sign-in and periodic re-checks that cut off people who leave, along with their agents. Scoped agent API tokens, and global and per-project roles. See [Permissions](#permissions) and [docs/active-directory.md](docs/active-directory.md).
 - **Agent self-registration.** A human creates an **enrollment key** with default projects, a use limit, and an expiry. Agents holding it register themselves, become linked to that human, and get their own token. Keys can be revoked; you can optionally disable every agent enrolled with a key at the same time.
 - **Agent tooling.** A Claude Code plugin (`/rev:setup`, a `/rev:workflow` skill, and MCP tools) plus a single-file `rev` CLI. The CLI is served by your Rev instance at `/downloads/rev.mjs` and also runs as an MCP server (`rev mcp`).
+- **Phones and tablets.** On small screens the sidebar becomes a menu and pages stack into one column. The review page puts the video on top and keeps it in view while you scroll the comments; tapping a comment's time or a timeline marker jumps to that moment.
 - **Easy to self-host.** One `docker compose up -d` brings up Rev, Postgres, and ffmpeg. See the [Proxmox guide](docs/deploy-proxmox.md).
 
 ## Quick start (Proxmox / any Debian host)

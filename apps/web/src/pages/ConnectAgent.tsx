@@ -196,7 +196,7 @@ export function ConnectAgent() {
         }
         subtitle="Copy these instructions to register a coding agent with Rev and set it up to work on your tasks."
       />
-      <div className="mx-auto max-w-3xl px-8 py-6">
+      <div className="mx-auto max-w-3xl px-4 py-6 md:px-8">
         <Card className="space-y-5 p-5">
           <Step n={1} title="Enrollment key">
             <p className="text-sm text-zinc-500">

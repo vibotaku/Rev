@@ -86,7 +86,7 @@ export function TaskPage() {
   const assignable = (members ?? []).filter((m) => task.can.assignableUserIds.includes(m.user.id));
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-6">
+    <div className="mx-auto max-w-6xl px-4 py-6 md:px-8">
       <Link to={`/p/${key}/tasks`} className="mb-4 inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-800">
         <ArrowLeft className="size-4" /> {key} tasks
       </Link>

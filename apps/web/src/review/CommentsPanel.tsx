@@ -130,7 +130,13 @@ function MarkComment({ mark, color, h }: { mark: ReviewCommentInfo; color: strin
   const [replying, setReplying] = useState(false);
   const selected = h.selectedId === mark.id;
   return (
-    <div id={`comment-${mark.id}`} className={cx("rounded-md border p-2", selected ? "border-accent-500 bg-accent-50/40" : "border-zinc-100 bg-zinc-50/60")}>
+    <div
+      id={`comment-${mark.id}`}
+      className={cx(
+        "scroll-mt-[calc(var(--stage-h)+0.75rem)] rounded-md border p-2 lg:scroll-mt-0",
+        selected ? "border-accent-500 bg-accent-50/40" : "border-zinc-100 bg-zinc-50/60",
+      )}
+    >
       <div className="flex items-start gap-2">
         <TaskCheckbox comment={mark} h={h} />
         <button
@@ -186,7 +192,10 @@ export function CommentCard({
   return (
     <div
       id={`comment-${comment.id}`}
-      className={cx("rounded-lg border bg-white p-3 transition-colors", selected ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200")}
+      className={cx(
+        "scroll-mt-[calc(var(--stage-h)+0.75rem)] rounded-lg border bg-white p-3 transition-colors lg:scroll-mt-0",
+        selected ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200",
+      )}
     >
       <div className="flex items-start gap-2">
         <TaskCheckbox comment={comment} h={h} />

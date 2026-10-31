@@ -97,19 +97,19 @@ export function ProjectTasks() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 px-8 py-3">
-        <div className="relative w-64">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 md:px-8">
+        <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-zinc-400" />
           <Input placeholder="Filter tasks" value={query} onChange={(e) => setQuery(e.target.value)} className="pl-8" />
         </div>
-        <Select className="w-44" value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <Select className="min-w-0 flex-1 sm:w-44 sm:flex-none" value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="all">Everyone</option>
           <option value="me">Assigned to me</option>
           <option value="agents">Assigned to agents</option>
           <option value="unassigned">Unassigned</option>
           <option value="agent-closed">Closed by agents, not reviewed</option>
         </Select>
-        <div className="ml-auto flex items-center gap-1 rounded-md border border-zinc-300 bg-white p-0.5">
+        <div className="flex items-center gap-1 rounded-md border border-zinc-300 bg-white p-0.5 sm:ml-auto">
           <button
             className={cx("rounded p-1.5", view === "board" ? "bg-zinc-100 text-zinc-900" : "text-zinc-400")}
             onClick={() => setViewPersist("board")}
@@ -135,20 +135,23 @@ export function ProjectTasks() {
       {isLoading ? (
         <PageLoader />
       ) : !tasks?.length ? (
-        <div className="px-8">
+        <div className="px-4 md:px-8">
           <EmptyState title="No tasks yet">
             Create tasks here, or turn accepted review comments into tasks from a review.
           </EmptyState>
         </div>
       ) : view === "board" ? (
-        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-8 pb-6">
+        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-4 pb-6 max-md:snap-x max-md:scroll-px-4 md:px-8">
           {[...BOARD, ...(showCancelled ? (["cancelled"] as TaskStatus[]) : [])].map((status) => {
             const column = filtered.filter((t) => t.status === status);
             const unreviewed = column.filter((t) => t.closure?.review === "agent").length;
             return (
               <div
                 key={status}
-                className={cx("flex w-72 shrink-0 flex-col rounded-lg bg-zinc-100/80", dragging && "ring-1 ring-zinc-200")}
+                className={cx(
+                  "flex w-72 max-w-[calc(100vw-3rem)] shrink-0 flex-col rounded-lg bg-zinc-100/80 max-md:snap-start",
+                  dragging && "ring-1 ring-zinc-200",
+                )}
                 onDragOver={(e) => canEdit && e.preventDefault()}
                 onDrop={() => drop(status, null)}
               >
@@ -219,7 +222,7 @@ export function ProjectTasks() {
           </button>
         </div>
       ) : (
-        <div className="px-8 pb-6">
+        <div className="px-4 pb-6 md:px-8">
           <Card className="divide-y divide-zinc-100">
             {TASK_STATUSES.flatMap((s) => filtered.filter((t) => t.status === s)).map((t) => (
               <TaskRow key={t.id} task={t} />

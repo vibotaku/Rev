@@ -37,14 +37,14 @@ export function ProjectLayout() {
     );
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-zinc-200 bg-white px-8 pt-5">
+      <div className="border-b border-zinc-200 bg-white px-4 pt-5 md:px-8">
         <div className="flex items-center gap-2">
           <span className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-xs font-semibold text-white">{project.key}</span>
           <h1 className="truncate text-xl font-semibold tracking-tight">{project.name}</h1>
           {project.archived && <span className="text-sm text-zinc-400">(archived)</span>}
         </div>
         {project.description && <p className="mt-1 line-clamp-1 text-sm text-zinc-500">{project.description}</p>}
-        <nav className="mt-4 flex gap-6">
+        <nav className="mt-4 flex gap-5 overflow-x-auto whitespace-nowrap md:gap-6">
           <NavLink to="tasks" className={tab}>
             Tasks <span className="text-zinc-400">{project.counts.openTasks}</span>
           </NavLink>
@@ -92,14 +92,14 @@ export function ProjectMembers() {
   const manage = project.can.manage;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 px-8 py-6">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-4xl space-y-4 px-4 py-6 md:px-8">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <p className="text-sm text-zinc-500">
           Owners manage the project and decide on any review. Members create tasks and reviews. Viewers read only. Agents can be members
           or viewers; only their linked human or a project owner can assign them work.
         </p>
         {project.myRole !== "viewer" && (
-          <Button variant="primary" onClick={() => setAdding(true)}>
+          <Button variant="primary" className="shrink-0" onClick={() => setAdding(true)}>
             <UserPlus className="size-4" /> Add
           </Button>
         )}
@@ -116,7 +116,7 @@ export function ProjectMembers() {
               {m.user.email && <span className="hidden text-sm text-zinc-500 sm:block">{m.user.email}</span>}
               {manage ? (
                 <Select
-                  className="w-28"
+                  className="w-32 shrink-0 sm:w-28"
                   value={m.role}
                   onChange={(e) => update.mutate({ userId: m.user.id, role: e.target.value as ProjectRole })}
                 >
@@ -127,7 +127,7 @@ export function ProjectMembers() {
                   ))}
                 </Select>
               ) : (
-                <span className="w-28 text-sm text-zinc-500">{m.role}</span>
+                <span className="w-32 shrink-0 text-sm text-zinc-500 sm:w-28">{m.role}</span>
               )}
               {(manage || ownAgent || m.user.id === me.id) && (
                 <Button
@@ -235,7 +235,7 @@ export function ProjectSettings() {
   const value = form ?? { name: project.name, description: project.description };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 px-8 py-6">
+    <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 md:px-8">
       <Card className="space-y-4 p-5">
         <Field label="Name">
           <Input value={value.name} onChange={(e) => setForm({ ...value, name: e.target.value })} />
@@ -250,7 +250,7 @@ export function ProjectSettings() {
           </Button>
         </div>
       </Card>
-      <Card className="flex items-center justify-between p-5">
+      <Card className="flex flex-col items-start gap-3 p-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
           <div className="text-sm font-medium">{project.archived ? "Unarchive project" : "Archive project"}</div>
           <div className="text-sm text-zinc-500">Archived projects stop accepting new tasks and reviews, and drop out of agents' task queues.</div>

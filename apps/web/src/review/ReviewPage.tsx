@@ -404,10 +404,10 @@ export function ReviewPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="@container flex flex-col [--stage-h:min(62dvh,56.25cqw+7rem)] lg:h-full">
       {/* Header */}
-      <div className="border-b border-zinc-200 bg-white px-6 py-3">
-        <div className="flex items-center gap-3">
+      <div className="border-b border-zinc-200 bg-white px-4 py-3 lg:px-6">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 lg:flex-nowrap">
           <Link to={`/p/${key}/reviews`} className="text-zinc-400 hover:text-zinc-700" title="Back to reviews">
             <ArrowLeft className="size-5" />
           </Link>
@@ -415,10 +415,10 @@ export function ReviewPage() {
           {editing ? (
             <Input className="max-w-xl" value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} />
           ) : (
-            <h1 className="min-w-0 truncate text-lg font-semibold">{review.title}</h1>
+            <h1 className="min-w-0 flex-1 truncate text-lg font-semibold lg:flex-none">{review.title}</h1>
           )}
           <ReviewStatusBadge status={review.status} />
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 empty:hidden lg:ml-auto lg:w-auto lg:shrink-0 lg:flex-nowrap">
             {review.can.publish && (
               <Button variant="primary" onClick={() => updateReview.mutate({ status: "open" })} loading={updateReview.isPending}>
                 Publish
@@ -437,7 +437,7 @@ export function ReviewPage() {
             ))}
           </div>
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 pl-8 text-xs text-zinc-500">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 lg:pl-8">
           <span className="flex items-center gap-1">
             Submitted by <UserChip user={review.createdBy} /> {timeAgo(review.createdAt)}
           </span>
@@ -482,7 +482,7 @@ export function ReviewPage() {
         </div>
         {review.can.decide && undecidedTotal > 0 && (
           <button
-            className="mt-1.5 ml-8 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+            className="mt-1.5 rounded-md bg-amber-50 px-2 py-1 text-left text-xs text-amber-800 hover:bg-amber-100 lg:ml-8"
             onClick={() => setStatusFilter("open")}
           >
             {undecidedTotal} comment{undecidedTotal > 1 ? "s" : ""} need{undecidedTotal > 1 ? "" : "s"} your decision: accept or reject each one
@@ -490,17 +490,22 @@ export function ReviewPage() {
         )}
         <RoundTabs review={review} current={round?.number ?? 1} undecided={undecided} onSelect={setRound} onNew={() => setCreatingRound(true)} />
         {review.status === "draft" && (
-          <div className="mt-2 ml-8 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+          <div className="mt-2 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-800 lg:ml-8">
             Draft — only visible to the submitter, the owner and project owners until published.
           </div>
         )}
         <ErrorBox error={updateReview.error ?? decide.error ?? deleteComment.error ?? deleteAsset.error} />
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        {/* Assets */}
-        <div className="flex w-44 shrink-0 flex-col border-r border-zinc-200 bg-white">
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+      <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:flex-row">
+        {/* Assets: a strip above the stage on small screens, a column beside it from lg. */}
+        <div
+          className={cx(
+            "flex shrink-0 items-center border-b border-zinc-200 bg-white lg:w-44 lg:flex-col lg:items-stretch lg:border-r lg:border-b-0",
+            roundAssets.length < 2 && !canUpload && "max-lg:hidden",
+          )}
+        >
+          <div className="flex min-h-0 min-w-0 flex-1 gap-2 overflow-x-auto p-2 lg:block lg:space-y-2 lg:overflow-y-auto">
             {roundAssets.map((a, i) => {
               const count = comments.filter((c) => c.assetId === a.id && !c.parentId && c.status === "open").length;
               return (
@@ -512,7 +517,7 @@ export function ReviewPage() {
                     setSelectedId(null);
                   }}
                   className={cx(
-                    "group relative block w-full overflow-hidden rounded-md border text-left",
+                    "group relative block w-32 shrink-0 overflow-hidden rounded-md border text-left lg:w-full",
                     a.id === asset?.id ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200 hover:border-zinc-300",
                   )}
                 >
@@ -556,7 +561,7 @@ export function ReviewPage() {
             {!roundAssets.length && <p className="p-2 text-xs text-zinc-400">No media in this round yet.</p>}
           </div>
           {canUpload && (
-            <div className="border-t border-zinc-200 p-2">
+            <div className="w-32 shrink-0 border-zinc-200 py-2 pr-2 lg:w-auto lg:border-t lg:pl-2">
               <input
                 ref={fileInput}
                 type="file"
@@ -576,7 +581,7 @@ export function ReviewPage() {
                   </div>
                 </div>
               ) : (
-                <Button size="sm" className="w-full" onClick={() => fileInput.current?.click()}>
+                <Button size="sm" className="lg:w-full" onClick={() => fileInput.current?.click()}>
                   <Plus className="size-3.5" /> Add media
                 </Button>
               )}
@@ -584,10 +589,10 @@ export function ReviewPage() {
           )}
         </div>
 
-        {/* Stage */}
-        <div className="flex min-w-0 flex-1 flex-col bg-zinc-950">
+        {/* Stage: pinned to the top on small screens, so the comments scroll under it. */}
+        <div className="sticky top-0 z-20 flex h-(--stage-h) min-w-0 flex-col bg-zinc-950 lg:static lg:h-auto lg:flex-1">
           {asset && (
-            <div className="flex items-center gap-1 border-b border-zinc-800 bg-zinc-900 px-3 py-1.5">
+            <div className="flex items-center gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-900 px-3 py-1.5 [&>*]:shrink-0">
               {TOOLS.map((t) => (
                 <button
                   key={t.id}
@@ -624,8 +629,8 @@ export function ReviewPage() {
                   <span className="text-xs whitespace-nowrap text-zinc-400">{draft.length} mark{draft.length > 1 ? "s" : ""}</span>
                 </>
               )}
-              <span className="ml-auto truncate text-xs text-zinc-500">{asset.caption || asset.filename}</span>
-              <a href={`${asset.url}?download=1`} className="ml-2 text-xs text-zinc-500 hover:text-zinc-200">
+              <span className="ml-auto !shrink truncate text-xs text-zinc-500 max-sm:hidden">{asset.caption || asset.filename}</span>
+              <a href={`${asset.url}?download=1`} className="text-xs text-zinc-500 hover:text-zinc-200 max-sm:ml-auto sm:ml-2">
                 Download
               </a>
             </div>
@@ -655,7 +660,7 @@ export function ReviewPage() {
         </div>
 
         {/* Comments */}
-        <div className="flex w-[400px] shrink-0 flex-col border-l border-zinc-200 bg-zinc-50">
+        <div className="flex flex-col bg-zinc-50 lg:w-[400px] lg:shrink-0 lg:border-l lg:border-zinc-200">
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
             {round && (
               <RoundCard
@@ -752,7 +757,7 @@ export function ReviewPage() {
           </div>
 
           {review.can.comment && (
-            <div className="space-y-2 border-t border-zinc-200 bg-white p-3">
+            <div className="space-y-2 border-zinc-200 bg-white p-3 max-lg:order-first max-lg:border-b lg:border-t">
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 {asset ? (
                   <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600">on {asset.caption || asset.filename}</span>

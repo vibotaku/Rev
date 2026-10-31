@@ -281,7 +281,7 @@ function VideoControls({
             title={`Comment @ ${formatTimestamp(m.timestampMs, true)}`}
             onClick={() => onMarkerClick(m.id)}
             className={cx(
-              "absolute -top-0.5 size-2.5 -translate-x-1/2 rounded-full border border-zinc-900",
+              "absolute -top-0.5 size-2.5 -translate-x-1/2 rounded-full border border-zinc-900 after:absolute after:-inset-2",
               m.selected ? "z-10 scale-150 bg-white" : m.status === "open" ? "bg-amber-400" : m.status === "rejected" ? "bg-zinc-500" : "bg-sky-400",
             )}
             style={{ left: `${Math.min(100, (m.timestampMs / 1000 / d) * 100)}%` }}

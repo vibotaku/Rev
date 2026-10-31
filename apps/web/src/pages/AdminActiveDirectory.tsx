@@ -178,7 +178,7 @@ export function AdminActiveDirectory() {
   const testFailedOnSave = save.error instanceof ApiError && save.error.code === "test_failed";
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-8 py-6">
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 md:px-8">
       {/* Status */}
       <Card className="flex flex-wrap items-center gap-x-6 gap-y-2 p-4 text-sm">
         <div className="flex items-center gap-2">

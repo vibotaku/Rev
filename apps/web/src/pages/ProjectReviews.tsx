@@ -22,7 +22,7 @@ export function ProjectReviews() {
   );
 
   return (
-    <div className="px-8 py-4">
+    <div className="px-4 py-4 md:px-8">
       <div className="mb-4 flex items-center gap-2">
         <Select className="w-52" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="active">Active</option>

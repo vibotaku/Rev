@@ -81,7 +81,7 @@ export function Agents() {
           </>
         }
       />
-      <div className="mx-auto max-w-4xl space-y-4 px-8 py-6">
+      <div className="mx-auto max-w-4xl space-y-4 px-4 py-6 md:px-8">
         <EnrollmentKeys showAll={showAll} />
         <h2 className="pt-4 text-sm font-semibold text-zinc-700">{showAll ? "All agents" : "Your agents"}</h2>
         <ErrorBox error={error ?? mintToken.error ?? revoke.error} />
@@ -97,13 +97,13 @@ export function Agents() {
         ) : (
           data.map((a) => (
             <Card key={a.id} className="p-4">
-              <div className="flex items-start gap-3">
-                <span className="flex size-9 items-center justify-center rounded-lg bg-zinc-900 text-white">
+              <div className="flex flex-wrap items-start gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white">
                   <Bot className="size-5" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{a.name}</span>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-medium break-all">{a.name}</span>
                     {a.disabled && <Badge className="bg-red-50 text-red-600">disabled</Badge>}
                     {a.owner.id !== me.id && <span className="text-xs text-zinc-500">linked to {a.owner.name}</span>}
                     {a.enrolledVia && (
@@ -127,7 +127,7 @@ export function Agents() {
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 max-sm:w-full max-sm:pl-12">
                   <Button size="sm" onClick={() => mintToken.mutate(a)} loading={mintToken.isPending && mintToken.variables?.id === a.id}>
                     <KeyRound className="size-3.5" /> New token
                   </Button>

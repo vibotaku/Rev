@@ -23,7 +23,7 @@ export function RoundTabs({
 }) {
   if (review.rounds.length < 2 && !review.can.addRound) return null;
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1 pl-8">
+    <div className="mt-2 flex flex-wrap items-center gap-1 lg:pl-8">
       <Layers className="mr-1 size-3.5 text-zinc-400" />
       {review.rounds.map((r) => {
         const n = undecided.get(r.number) ?? 0;

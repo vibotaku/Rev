@@ -35,14 +35,14 @@ export function EnrollmentKeys({ showAll }: { showAll: boolean }) {
 
   return (
     <section className="space-y-2">
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
         <div>
           <h2 className="text-sm font-semibold text-zinc-700">Enrollment keys</h2>
           <p className="text-sm text-zinc-500">
             Agents holding a key register themselves. They become your agents and join the key's projects.
           </p>
         </div>
-        <Button variant="primary" onClick={() => setCreating(true)}>
+        <Button variant="primary" className="shrink-0" onClick={() => setCreating(true)}>
           <Plus className="size-4" /> New enrollment key
         </Button>
       </div>

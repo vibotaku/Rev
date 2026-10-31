@@ -29,7 +29,7 @@ export function Dashboard() {
   return (
     <div>
       <PageHeader title={`Hi, ${user.name.split(" ")[0]}`} subtitle="What needs your attention." />
-      <div className="mx-auto max-w-5xl space-y-8 px-8 py-6">
+      <div className="mx-auto max-w-5xl space-y-8 px-4 py-6 md:px-8">
         <ErrorBox error={error} />
         {isLoading || !data ? (
           <PageLoader />

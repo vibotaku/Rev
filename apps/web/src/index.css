@@ -19,6 +19,15 @@ body {
   @apply bg-zinc-50 text-zinc-900 antialiased;
 }
 
+/* iOS Safari zooms the page into any field whose text is under 16px when it gets focus. */
+@supports (-webkit-touch-callout: none) {
+  input,
+  select,
+  textarea {
+    font-size: max(1rem, 1em);
+  }
+}
+
 .markdown {
   @apply text-sm leading-relaxed text-zinc-800;
 }

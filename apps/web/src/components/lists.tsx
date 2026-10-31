@@ -25,7 +25,7 @@ export function ReviewCard({ review }: { review: ReviewInfo }) {
       to={reviewPath(review.projectKey, review.number)}
       className="group flex overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition hover:border-zinc-300 hover:shadow"
     >
-      <div className="flex w-36 shrink-0 items-center justify-center bg-zinc-900">
+      <div className="flex w-24 shrink-0 items-center justify-center bg-zinc-900 sm:w-36">
         {review.thumbnailUrl ? (
           <img src={review.thumbnailUrl} alt="" className="h-full max-h-24 w-full object-cover" />
         ) : (
@@ -40,7 +40,7 @@ export function ReviewCard({ review }: { review: ReviewInfo }) {
           {review.task && <span className="truncate text-xs text-zinc-500">for {review.task.ref}</span>}
         </div>
         <div className="truncate text-sm font-medium group-hover:text-accent-700">{review.title}</div>
-        <div className="flex items-center gap-3 text-xs whitespace-nowrap text-zinc-500">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs whitespace-nowrap text-zinc-500 sm:flex-nowrap">
           <span className="min-w-0 overflow-hidden">
             <UserChip user={review.createdBy} />
           </span>
