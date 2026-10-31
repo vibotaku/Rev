@@ -30457,7 +30457,15 @@ var nodeFacts = {
   capabilities: nodeCapabilities.nullable().default(null)
 };
 var nodeRegisterBody = external_exports.object({ key: external_exports.string().trim().min(10).max(200), name, ...nodeFacts });
-var nodeStateBody = external_exports.object({ ...nodeFacts, sessions: external_exports.array(external_exports.uuid()).max(1e3).default([]) });
+var nodeStateBody = external_exports.object({
+  ...nodeFacts,
+  sessions: external_exports.array(external_exports.uuid()).max(1e3).default([]),
+  /**
+   * Claude Code sessions on the machine using Rev, found by their Rev MCP server: the
+   * agent's token prefix (as shown in Rev, never the token) and the folder it works in.
+   */
+  agents: external_exports.array(external_exports.object({ tokenPrefix: external_exports.string().min(8).max(20), cwd: external_exports.string().max(1e3).nullable() })).max(100).default([])
+});
 var nodeUpdateBody = external_exports.object({ name: name.optional(), disabled: external_exports.boolean().optional() });
 var nodeJobResultBody = external_exports.object({
   ok: external_exports.boolean(),
@@ -30619,15 +30627,17 @@ var RevApi = class _RevApi {
   webUrl(kind, projectKey2, number4) {
     return `${this.baseUrl}/p/${projectKey2}/${kind}/${number4}`;
   }
-  async send(method, pathname, body, headers = {}) {
+  async send(method, pathname, body, headers = {}, signal) {
     let res;
     try {
       res = await fetch(this.url(pathname), {
         method,
         body,
-        headers: { ...this.token ? { authorization: `Bearer ${this.token}` } : {}, ...headers }
+        headers: { ...this.token ? { authorization: `Bearer ${this.token}` } : {}, ...headers },
+        signal
       });
     } catch (err) {
+      if (signal?.aborted) throw err;
       const cause = err.cause;
       throw new RevApiError(0, "network", `Cannot reach Rev at ${this.baseUrl}: ${cause?.code ?? cause?.message ?? err.message}`);
     }
@@ -30654,12 +30664,13 @@ var RevApi = class _RevApi {
     return await res.json();
   }
   /** Like request(), but null when the server answers 204 No Content. */
-  async requestOrNull(method, pathname, body) {
+  async requestOrNull(method, pathname, body, signal) {
     const res = await this.send(
       method,
       pathname,
       body === void 0 ? void 0 : JSON.stringify(body),
-      body === void 0 ? {} : { "content-type": "application/json" }
+      body === void 0 ? {} : { "content-type": "application/json" },
+      signal
     );
     return res.status === 204 ? null : await res.json();
   }
@@ -30680,9 +30691,9 @@ var RevApi = class _RevApi {
     return new _RevApi(baseUrl, "").request("POST", "/api/nodes/register", body);
   }
   // Node endpoints: this client must hold a node token.
-  /** The next job, waiting up to `wait` seconds for one; null if there is none. */
-  nextJob(wait) {
-    return this.requestOrNull("GET", `/api/node/jobs/next?wait=${wait}`);
+  /** The next job, waiting up to `wait` seconds for one; null if there is none. Aborting `signal` gives up waiting. */
+  nextJob(wait, signal) {
+    return this.requestOrNull("GET", `/api/node/jobs/next?wait=${wait}`, void 0, signal);
   }
   reportJob(id, result) {
     return this.request("POST", `/api/node/jobs/${id}/result`, result);
@@ -40941,7 +40952,7 @@ async function runMcpServer(client) {
 // src/node.ts
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, chmod as chmod2, copyFile, mkdir as mkdir2, readdir, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { appendFile, chmod as chmod2, copyFile, mkdir as mkdir2, readdir, readFile as readFile2, readlink, rm, writeFile as writeFile2 } from "node:fs/promises";
 import os2 from "node:os";
 import path6 from "node:path";
 import { promisify } from "node:util";
@@ -40967,6 +40978,8 @@ function nodePaths(env = process.env) {
   return {
     home,
     config: config2,
+    /** Held by the running `rev node run`: Rev hands a node one job at a time, so only one may serve it. */
+    lock: path6.join(dir, "node.pid"),
     registry: path6.join(dir, "node-workspaces.json"),
     agents: path6.join(dir, "agents"),
     defaultRoot: path6.join(home, "rev-workspaces")
@@ -41006,6 +41019,7 @@ async function detectTools(sys) {
   const [git, tmux, claude] = await Promise.all([version2("git", ["--version"]), version2("tmux", ["-V"]), version2("claude", ["--version"])]);
   return { node: process.version, git, tmux, claude };
 }
+var sameRev = (a, b) => !!a && a.replace(/\/+$/, "").toLowerCase() === b.replace(/\/+$/, "").toLowerCase();
 var NodeRunner = class {
   constructor(cfg, sys = realSys, env = process.env, log = (l) => console.log(`${(/* @__PURE__ */ new Date()).toISOString()} ${l}`)) {
     this.cfg = cfg;
@@ -41020,6 +41034,8 @@ var NodeRunner = class {
   env;
   log;
   api;
+  /** Which OS to inspect processes for; tests set it. */
+  platform = process.platform;
   paths;
   tools = null;
   /** Open tasks seen per running workspace, to notice new assignments. */
@@ -41251,6 +41267,60 @@ ${lines}` : ""}`);
     }
     for (const id of [...this.seen.keys()]) if (!running.includes(id)) this.seen.delete(id);
   }
+  /** Environment variables of one of this user's processes (only the ones Rev config depends on). */
+  async processEnv(pid) {
+    const keys = ["REV_CONFIG", "REV_URL", "REV_TOKEN", "XDG_CONFIG_HOME", "HOME"];
+    try {
+      if (this.platform === "linux") {
+        const pairs = (await readFile2(`/proc/${pid}/environ`, "utf8")).split("\0").map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]);
+        return Object.fromEntries(pairs.filter(([k]) => keys.includes(k)));
+      }
+      const out = (await this.sys.exec("ps", ["-wwE", "-o", "command=", "-p", String(pid)])).stdout;
+      const env = {};
+      for (const k of keys) {
+        const m = new RegExp(`(?:^|\\s)${k}=(\\S+)`).exec(out);
+        if (m) env[k] = m[1];
+      }
+      return env;
+    } catch {
+      return null;
+    }
+  }
+  async processCwd(pid) {
+    try {
+      if (this.platform === "linux") return await readlink(`/proc/${pid}/cwd`);
+      const out = (await this.sys.exec("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"])).stdout;
+      return out.split("\n").find((l) => l.startsWith("n"))?.slice(1) || null;
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * Claude Code sessions on this machine that use this Rev, by their Rev MCP server
+   * (`rev.mjs mcp`): which agent (its token prefix, never the token) and which folder.
+   */
+  async runningAgents() {
+    let out = "";
+    try {
+      out = (await this.sys.exec("ps", ["axww", "-o", "pid=,command="])).stdout;
+    } catch {
+      return [];
+    }
+    const pids = out.split("\n").map((l) => /^\s*(\d+)\s+(.*)$/.exec(l)).filter((m) => !!m && /(^|[\s/])rev(\.mjs)?\s+mcp(\s|$)/.test(m[2])).map((m) => Number(m[1]));
+    const found = [];
+    for (const pid of pids) {
+      const env = await this.processEnv(pid);
+      if (!env) continue;
+      const file2 = env.REV_CONFIG || path6.join(env.XDG_CONFIG_HOME || path6.join(env.HOME || this.paths.home, ".config"), "rev", "config.json");
+      const saved = env.REV_TOKEN && env.REV_URL ? null : await readJson(file2);
+      const url2 = env.REV_URL || saved?.url;
+      const token = env.REV_TOKEN || saved?.token;
+      if (!token || !sameRev(url2, this.cfg.url)) continue;
+      const cwd = await this.processCwd(pid);
+      if (!found.some((f) => f.tokenPrefix === token.slice(0, 12) && f.cwd === cwd)) found.push({ tokenPrefix: token.slice(0, 12), cwd });
+    }
+    return found;
+  }
   async facts() {
     return {
       hostname: os2.hostname(),
@@ -41262,8 +41332,8 @@ ${lines}` : ""}`);
     };
   }
   async checkIn() {
-    const sessions = await this.runningSessions();
-    await this.api.reportState({ ...await this.facts(), sessions });
+    const [sessions, agents] = await Promise.all([this.runningSessions(), this.runningAgents()]);
+    await this.api.reportState({ ...await this.facts(), sessions, agents });
     await this.nudge(sessions);
   }
   /** The service loop: check in every 30 s, and run jobs as they arrive. */
@@ -41277,13 +41347,14 @@ ${lines}` : ""}`);
           await this.checkIn();
           lastCheckIn = Date.now();
         }
-        const job = await this.api.nextJob(25);
+        const job = await this.api.nextJob(25, signal);
         delay = 1e3;
         if (job) {
           await this.handle(job);
           lastCheckIn = 0;
         }
       } catch (e) {
+        if (signal?.aborted) break;
         const rejected = e instanceof RevApiError && e.status === 401;
         const blocked = process.platform === "darwin" && /EHOSTUNREACH/.test(errorText(e));
         this.log(
@@ -41295,6 +41366,23 @@ ${lines}` : ""}`);
     }
   }
 };
+async function lockNode(env = process.env) {
+  const { lock } = nodePaths(env);
+  const other = Number((await readFile2(lock, "utf8").catch(() => "")).trim());
+  if (other && other !== process.pid) {
+    let alive = true;
+    try {
+      process.kill(other, 0);
+    } catch (e) {
+      alive = e.code === "EPERM";
+    }
+    if (alive) throw new Error(`This node is already being served by process ${other} (the background service?). Run only one \`rev node run\` per node.`);
+  }
+  await mkdir2(path6.dirname(lock), { recursive: true });
+  await writeFile2(lock, `${process.pid}
+`);
+  return () => rm(lock, { force: true });
+}
 var LABEL = "com.vibotaku.rev-node";
 var xml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 async function installService(env, sys, scriptPath) {
@@ -41627,27 +41715,34 @@ ${url2}`
   node2.command("run").description("Serve Rev in the foreground (what the background service runs)").action(async () => {
     const cfg = await loadNodeConfig(io.env);
     if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
+    const unlock = await lockNode(io.env);
     const stop = new AbortController();
     for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => stop.abort());
-    await new NodeRunner(cfg, sys, io.env).serve(stop.signal);
+    try {
+      await new NodeRunner(cfg, sys, io.env).serve(stop.signal);
+    } finally {
+      await unlock();
+    }
   });
   node2.command("status").description("Show this node's settings, tools and workspaces").action(async (_opts, cmd) => {
     const cfg = await loadNodeConfig(io.env);
     if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
     const runner = new NodeRunner(cfg, sys, io.env, () => void 0);
-    const [facts, running] = await Promise.all([runner.facts(), runner.runningSessions()]);
+    const [facts, running, agents] = await Promise.all([runner.facts(), runner.runningSessions(), runner.runningAgents()]);
     const registry2 = JSON.parse(await readFile3(nodePaths(io.env).registry, "utf8").catch(() => "{}"));
     const workspaces = Object.entries(registry2).map(([id, w]) => ({ id, ...w, running: running.includes(id) }));
     const { token: _token, ...safe } = cfg;
     emit(
       cmd,
-      { node: safe, tools: facts.capabilities, workspaces },
+      { node: safe, tools: facts.capabilities, workspaces, agents },
       () => [
         `${cfg.name} on ${cfg.url}`,
         `Workspaces folder: ${cfg.workspaceRoot}`,
         `Claude Code arguments: ${cfg.claudeArgs.join(" ") || "(none)"}`,
         `Tools: ${["git", "tmux", "claude"].map((t) => `${t} ${facts.capabilities[t] ?? "MISSING"}`).join(" \xB7 ")}`,
-        ...workspaces.length ? workspaces.map((w) => `  ${w.name.padEnd(20)} ${w.running ? "running" : "stopped"}  ${w.agentName}  ${w.path}`) : ["No workspaces yet."]
+        ...workspaces.length ? workspaces.map((w) => `  ${w.name.padEnd(20)} ${w.running ? "running" : "stopped"}  ${w.agentName}  ${w.path}`) : ["No workspaces yet."],
+        `Rev sessions running here (shown in Rev under this node): ${agents.length || "none"}`,
+        ...agents.map((a) => `  ${a.tokenPrefix}\u2026  ${a.cwd ?? "(folder unknown)"}`)
       ].join("\n")
     );
   });

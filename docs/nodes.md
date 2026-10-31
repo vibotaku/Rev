@@ -6,6 +6,13 @@ A **node** is a computer running `rev node`, a small background service. Once a 
 - **Get an agent for it.** The node registers a new agent account for the workspace, `claude-<node>-<workspace>`, linked to you and a member of the project. It sets the folder up so Claude Code there uses that agent: the Rev plugin is enabled, and `REV_CONFIG` points at the agent's own login file.
 - **Start and stop Claude Code** in the workspace. It runs in a tmux session called `rev-<workspace>`. When started, it is asked to work through its Rev tasks. Whenever a new task is assigned to its agent, the node types a note about it into the session, usually within 30 seconds.
 
+- **See what runs there.** Nodes is a tree: each node, then its workspaces, then the **other agents running here**.
+  - The node finds every Claude Code session on the computer that uses Rev, by its Rev MCP server (`rev.mjs mcp`). That includes sessions you started yourself, in any folder.
+  - It reports which of your agents each session is and the folder it works in. Agents are identified by their token prefix, as shown on My agents; the token itself never leaves the machine.
+  - Only agents linked to the node's owner are listed, and only while the node is online.
+
+Collapsed nodes and workspaces stay collapsed in your browser. Use the pencil to rename a node; agents are renamed on **My agents**.
+
 The node connects out to Rev (it long-polls for work), so the computer needs no open ports, and it works behind NAT.
 
 ## Setting up a node
@@ -45,8 +52,8 @@ Running `rev node install` again on a node keeps its registration. It reinstalls
 
 Other commands:
 
-- `rev node status` shows the node's settings, tools and workspaces.
-- `rev node run` serves Rev in the foreground; it is what the service runs.
+- `rev node status` shows the node's settings, tools, workspaces and the Rev sessions running on the computer.
+- `rev node run` serves Rev in the foreground; it is what the service runs. Only one process can serve a node at a time: a second `rev node run` exits and says which process is already serving it.
 - `rev node uninstall` removes the service. The node stays registered until you remove it in Rev.
 
 ### What agents may do without asking

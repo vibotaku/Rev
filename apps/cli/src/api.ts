@@ -46,15 +46,17 @@ export class RevApi {
     return `${this.baseUrl}/p/${projectKey}/${kind}/${number}`;
   }
 
-  private async send(method: string, pathname: string, body?: RequestInit["body"], headers: Record<string, string> = {}) {
+  private async send(method: string, pathname: string, body?: RequestInit["body"], headers: Record<string, string> = {}, signal?: AbortSignal) {
     let res: Response;
     try {
       res = await fetch(this.url(pathname), {
         method,
         body,
         headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), ...headers },
+        signal,
       });
     } catch (err) {
+      if (signal?.aborted) throw err;
       const cause = (err as { cause?: { code?: string; message?: string } }).cause;
       throw new RevApiError(0, "network", `Cannot reach Rev at ${this.baseUrl}: ${cause?.code ?? cause?.message ?? (err as Error).message}`);
     }
@@ -84,12 +86,13 @@ export class RevApi {
   }
 
   /** Like request(), but null when the server answers 204 No Content. */
-  async requestOrNull<T>(method: string, pathname: string, body?: unknown): Promise<T | null> {
+  async requestOrNull<T>(method: string, pathname: string, body?: unknown, signal?: AbortSignal): Promise<T | null> {
     const res = await this.send(
       method,
       pathname,
       body === undefined ? undefined : JSON.stringify(body),
       body === undefined ? {} : { "content-type": "application/json" },
+      signal,
     );
     return res.status === 204 ? null : ((await res.json()) as T);
   }
@@ -116,9 +119,9 @@ export class RevApi {
 
   // Node endpoints: this client must hold a node token.
 
-  /** The next job, waiting up to `wait` seconds for one; null if there is none. */
-  nextJob(wait: number) {
-    return this.requestOrNull<NodeJob>("GET", `/api/node/jobs/next?wait=${wait}`);
+  /** The next job, waiting up to `wait` seconds for one; null if there is none. Aborting `signal` gives up waiting. */
+  nextJob(wait: number, signal?: AbortSignal) {
+    return this.requestOrNull<NodeJob>("GET", `/api/node/jobs/next?wait=${wait}`, undefined, signal);
   }
 
   reportJob(id: string, result: { ok: boolean; error?: string; path?: string }) {

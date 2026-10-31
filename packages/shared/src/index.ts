@@ -201,7 +201,18 @@ const nodeFacts = {
 /** Sent by `rev node install` (unauthenticated apart from the enrollment key). */
 export const nodeRegisterBody = z.object({ key: z.string().trim().min(10).max(200), name, ...nodeFacts });
 /** A node's periodic check-in: its facts and the workspaces whose Claude Code session is running. */
-export const nodeStateBody = z.object({ ...nodeFacts, sessions: z.array(z.uuid()).max(1000).default([]) });
+export const nodeStateBody = z.object({
+  ...nodeFacts,
+  sessions: z.array(z.uuid()).max(1000).default([]),
+  /**
+   * Claude Code sessions on the machine using Rev, found by their Rev MCP server: the
+   * agent's token prefix (as shown in Rev, never the token) and the folder it works in.
+   */
+  agents: z
+    .array(z.object({ tokenPrefix: z.string().min(8).max(20), cwd: z.string().max(1000).nullable() }))
+    .max(100)
+    .default([]),
+});
 export const nodeUpdateBody = z.object({ name: name.optional(), disabled: z.boolean().optional() });
 export const nodeJobResultBody = z.object({
   ok: z.boolean(),
@@ -538,6 +549,15 @@ export interface WorkspaceInfo {
   createdAt: string;
 }
 
+/** An agent whose Claude Code session the node saw running, at its last check-in. */
+export interface NodeRunningAgent {
+  agent: UserSummary;
+  /** The folder the session works in. */
+  cwd: string | null;
+  /** Set when it is the agent of one of the node's workspaces. */
+  workspaceId: string | null;
+}
+
 export interface NodeInfo {
   id: string;
   name: string;
@@ -553,6 +573,8 @@ export interface NodeInfo {
   disabled: boolean;
   createdAt: string;
   workspaces: WorkspaceInfo[];
+  /** Agents running on the node right now (empty while it is offline). */
+  agents: NodeRunningAgent[];
 }
 
 export interface NodeRegistration {

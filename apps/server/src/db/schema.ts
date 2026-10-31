@@ -394,6 +394,8 @@ export const nodes = pgTable(
     version: text("version").notNull().default(""),
     workspaceRoot: text("workspace_root").notNull().default(""),
     capabilities: jsonb("capabilities").$type<NodeCapabilities>(),
+    /** Agents whose Claude Code session the node saw running at its last check-in. */
+    runningAgents: jsonb("running_agents").$type<{ agentId: string; cwd: string | null }[]>().notNull().default([]),
     lastSeenAt: ts("last_seen_at"),
     disabledAt: ts("disabled_at"),
     createdAt: createdAt(),

@@ -1,0 +1,1 @@
+ALTER TABLE "nodes" ADD COLUMN "running_agents" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -136,6 +136,33 @@ describe("nodes", () => {
     expect(info!.workspaces[0]).toMatchObject({ session: "running", sessionError: "tmux: no server running" });
   });
 
+  it("shows the owner's agents the node sees running", async () => {
+    const [info] = await myNodes(bob);
+    const ws = info!.workspaces.find((w) => w.name === "web")!;
+    const wsToken = (await bob.post(`/api/agents/${ws.agent!.id}/tokens`, { name: "probe" })).json.token as string;
+    const manual = (await bob.post("/api/agents", { name: "claude-laptop" })).json;
+    const manualToken = (await bob.post(`/api/agents/${manual.id}/tokens`, { name: "t" })).json.token as string;
+    // Someone else's agent is never attributed to Bob's node.
+    const alices = (await alice.post("/api/agents", { name: "claude-alice" })).json;
+    const alicesToken = (await alice.post(`/api/agents/${alices.id}/tokens`, { name: "t" })).json.token as string;
+    await node.put("/api/node/state", {
+      ...facts,
+      sessions: [ws.id],
+      agents: [
+        { tokenPrefix: wsToken.slice(0, 12), cwd: "/Users/bob/rev-workspaces/web" },
+        { tokenPrefix: manualToken.slice(0, 12), cwd: "/Users/bob/code/site" },
+        { tokenPrefix: manualToken.slice(0, 12), cwd: "/Users/bob/code/site" },
+        { tokenPrefix: alicesToken.slice(0, 12), cwd: "/tmp" },
+        { tokenPrefix: "rev_unknown0", cwd: null },
+      ],
+    });
+    const [after] = await myNodes(bob);
+    expect(after!.agents.map((a) => [a.agent.name, a.cwd, a.workspaceId])).toEqual([
+      ["claude-mac-01-web", "/Users/bob/rev-workspaces/web", ws.id],
+      ["claude-laptop", "/Users/bob/code/site", null],
+    ]);
+  });
+
   it("fails a start whose workspace could not be set up, and jobs a node abandoned", async () => {
     const created = await bob.post(`/api/nodes/${nodeId}/workspaces`, { name: "ops", newProject: { key: "OPS", name: "Ops" }, start: true });
     expect(created.status).toBe(200);

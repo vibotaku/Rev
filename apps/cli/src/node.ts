@@ -4,7 +4,7 @@
 // attach. What Claude Code may do unattended (claudeArgs) is set on this machine only.
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, chmod, copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, copyFile, mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -64,6 +64,8 @@ export function nodePaths(env: NodeJS.ProcessEnv = process.env) {
   return {
     home,
     config,
+    /** Held by the running `rev node run`: Rev hands a node one job at a time, so only one may serve it. */
+    lock: path.join(dir, "node.pid"),
     registry: path.join(dir, "node-workspaces.json"),
     agents: path.join(dir, "agents"),
     defaultRoot: path.join(home, "rev-workspaces"),
@@ -126,8 +128,12 @@ export async function detectTools(sys: Sys): Promise<NodeCapabilities> {
   return { node: process.version, git, tmux, claude };
 }
 
+const sameRev = (a: string | undefined, b: string) => !!a && a.replace(/\/+$/, "").toLowerCase() === b.replace(/\/+$/, "").toLowerCase();
+
 export class NodeRunner {
   readonly api: RevApi;
+  /** Which OS to inspect processes for; tests set it. */
+  platform: NodeJS.Platform = process.platform;
   private readonly paths: ReturnType<typeof nodePaths>;
   private tools: { at: number; value: NodeCapabilities } | null = null;
   /** Open tasks seen per running workspace, to notice new assignments. */
@@ -383,6 +389,70 @@ export class NodeRunner {
     for (const id of [...this.seen.keys()]) if (!running.includes(id)) this.seen.delete(id);
   }
 
+  /** Environment variables of one of this user's processes (only the ones Rev config depends on). */
+  private async processEnv(pid: number): Promise<Record<string, string> | null> {
+    const keys = ["REV_CONFIG", "REV_URL", "REV_TOKEN", "XDG_CONFIG_HOME", "HOME"];
+    try {
+      if (this.platform === "linux") {
+        const pairs = (await readFile(`/proc/${pid}/environ`, "utf8")).split("\0").map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]);
+        return Object.fromEntries(pairs.filter(([k]) => keys.includes(k!)));
+      }
+      // macOS prints the environment after the command; values with spaces are not supported.
+      const out = (await this.sys.exec("ps", ["-wwE", "-o", "command=", "-p", String(pid)])).stdout;
+      const env: Record<string, string> = {};
+      for (const k of keys) {
+        const m = new RegExp(`(?:^|\\s)${k}=(\\S+)`).exec(out);
+        if (m) env[k] = m[1]!;
+      }
+      return env;
+    } catch {
+      return null;
+    }
+  }
+
+  private async processCwd(pid: number) {
+    try {
+      if (this.platform === "linux") return await readlink(`/proc/${pid}/cwd`);
+      const out = (await this.sys.exec("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"])).stdout;
+      return out.split("\n").find((l) => l.startsWith("n"))?.slice(1) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Claude Code sessions on this machine that use this Rev, by their Rev MCP server
+   * (`rev.mjs mcp`): which agent (its token prefix, never the token) and which folder.
+   */
+  async runningAgents(): Promise<{ tokenPrefix: string; cwd: string | null }[]> {
+    let out = "";
+    try {
+      out = (await this.sys.exec("ps", ["axww", "-o", "pid=,command="])).stdout;
+    } catch {
+      return [];
+    }
+    const pids = out
+      .split("\n")
+      .map((l) => /^\s*(\d+)\s+(.*)$/.exec(l))
+      .filter((m): m is RegExpExecArray => !!m && /(^|[\s/])rev(\.mjs)?\s+mcp(\s|$)/.test(m[2]!))
+      .map((m) => Number(m[1]));
+    const found: { tokenPrefix: string; cwd: string | null }[] = [];
+    for (const pid of pids) {
+      const env = await this.processEnv(pid);
+      if (!env) continue;
+      // Same lookup as the CLI's loadConfig: env vars win over the config file.
+      const file =
+        env.REV_CONFIG || path.join(env.XDG_CONFIG_HOME || path.join(env.HOME || this.paths.home, ".config"), "rev", "config.json");
+      const saved = env.REV_TOKEN && env.REV_URL ? null : await readJson<{ url?: string; token?: string }>(file);
+      const url = env.REV_URL || saved?.url;
+      const token = env.REV_TOKEN || saved?.token;
+      if (!token || !sameRev(url, this.cfg.url)) continue;
+      const cwd = await this.processCwd(pid);
+      if (!found.some((f) => f.tokenPrefix === token.slice(0, 12) && f.cwd === cwd)) found.push({ tokenPrefix: token.slice(0, 12), cwd });
+    }
+    return found;
+  }
+
   async facts() {
     return {
       hostname: os.hostname(),
@@ -395,8 +465,8 @@ export class NodeRunner {
   }
 
   async checkIn() {
-    const sessions = await this.runningSessions();
-    await this.api.reportState({ ...(await this.facts()), sessions });
+    const [sessions, agents] = await Promise.all([this.runningSessions(), this.runningAgents()]);
+    await this.api.reportState({ ...(await this.facts()), sessions, agents });
     await this.nudge(sessions);
   }
 
@@ -411,13 +481,15 @@ export class NodeRunner {
           await this.checkIn();
           lastCheckIn = Date.now();
         }
-        const job = await this.api.nextJob(25);
+        // Stopping gives up the wait, so a job is never taken that this process won't run.
+        const job = await this.api.nextJob(25, signal);
         delay = 1000;
         if (job) {
           await this.handle(job);
           lastCheckIn = 0;
         }
       } catch (e) {
+        if (signal?.aborted) break;
         const rejected = e instanceof RevApiError && e.status === 401;
         // macOS blocks background services from the local network until allowed.
         const blocked = process.platform === "darwin" && /EHOSTUNREACH/.test(errorText(e));
@@ -431,6 +503,27 @@ export class NodeRunner {
       }
     }
   }
+}
+
+/**
+ * Makes this process the only one serving the node. Throws if another `rev node run` is
+ * alive; returns a function that releases the lock.
+ */
+export async function lockNode(env: NodeJS.ProcessEnv = process.env) {
+  const { lock } = nodePaths(env);
+  const other = Number((await readFile(lock, "utf8").catch(() => "")).trim());
+  if (other && other !== process.pid) {
+    let alive = true;
+    try {
+      process.kill(other, 0);
+    } catch (e) {
+      alive = (e as NodeJS.ErrnoException).code === "EPERM";
+    }
+    if (alive) throw new Error(`This node is already being served by process ${other} (the background service?). Run only one \`rev node run\` per node.`);
+  }
+  await mkdir(path.dirname(lock), { recursive: true });
+  await writeFile(lock, `${process.pid}\n`);
+  return () => rm(lock, { force: true });
 }
 
 // ---------------------------------------------------------------------------

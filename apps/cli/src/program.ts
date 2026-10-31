@@ -12,6 +12,7 @@ import {
   detectTools,
   installService,
   loadNodeConfig,
+  lockNode,
   NodeRunner,
   nodePaths,
   realSys,
@@ -405,9 +406,14 @@ export function buildProgram(io: Io = defaultIo) {
     .action(async () => {
       const cfg = await loadNodeConfig(io.env);
       if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
+      const unlock = await lockNode(io.env);
       const stop = new AbortController();
       for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => stop.abort());
-      await new NodeRunner(cfg, sys, io.env).serve(stop.signal);
+      try {
+        await new NodeRunner(cfg, sys, io.env).serve(stop.signal);
+      } finally {
+        await unlock();
+      }
     });
 
   node
@@ -417,11 +423,11 @@ export function buildProgram(io: Io = defaultIo) {
       const cfg = await loadNodeConfig(io.env);
       if (!cfg) throw new Error("This computer is not a node yet: run `rev node install --url <url> --key <enrollment key>`.");
       const runner = new NodeRunner(cfg, sys, io.env, () => undefined);
-      const [facts, running] = await Promise.all([runner.facts(), runner.runningSessions()]);
+      const [facts, running, agents] = await Promise.all([runner.facts(), runner.runningSessions(), runner.runningAgents()]);
       const registry = JSON.parse(await readFile(nodePaths(io.env).registry, "utf8").catch(() => "{}")) as Record<string, { name: string; path: string; agentName: string }>;
       const workspaces = Object.entries(registry).map(([id, w]) => ({ id, ...w, running: running.includes(id) }));
       const { token: _token, ...safe } = cfg;
-      emit(cmd, { node: safe, tools: facts.capabilities, workspaces }, () =>
+      emit(cmd, { node: safe, tools: facts.capabilities, workspaces, agents }, () =>
         [
           `${cfg.name} on ${cfg.url}`,
           `Workspaces folder: ${cfg.workspaceRoot}`,
@@ -430,6 +436,8 @@ export function buildProgram(io: Io = defaultIo) {
           ...(workspaces.length
             ? workspaces.map((w) => `  ${w.name.padEnd(20)} ${w.running ? "running" : "stopped"}  ${w.agentName}  ${w.path}`)
             : ["No workspaces yet."]),
+          `Rev sessions running here (shown in Rev under this node): ${agents.length || "none"}`,
+          ...agents.map((a) => `  ${a.tokenPrefix}…  ${a.cwd ?? "(folder unknown)"}`),
         ].join("\n"),
       );
     });

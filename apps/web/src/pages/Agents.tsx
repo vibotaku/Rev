@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, KeyRound, Plug, Plus, Trash2 } from "lucide-react";
+import { Bot, KeyRound, Pencil, Plug, Plus, Trash2 } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import type { AgentInfo } from "@rev/shared";
 import { api } from "../api";
@@ -26,6 +26,45 @@ export function setupInstructions(token: string) {
     "rev tasks",
     'rev review create --project KEY --title "What changed" recording.mp4 screenshot.png',
   ].join("\n");
+}
+
+/** Renames an agent and edits its description, in place. */
+function EditAgent({ agent, onDone }: { agent: AgentInfo; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState(agent.name);
+  const [description, setDescription] = useState(agent.description);
+  const save = useMutation({
+    mutationFn: () => api.patch<AgentInfo>(`/api/agents/${agent.id}`, { name: name.trim(), description }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      qc.invalidateQueries({ queryKey: ["nodes"] });
+      onDone();
+    },
+  });
+  return (
+    <div className="space-y-2">
+      <Input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && name.trim()) save.mutate();
+          if (e.key === "Escape") onDone();
+        }}
+        aria-label="Agent name"
+      />
+      <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What or where this agent is" aria-label="Description" />
+      <ErrorBox error={save.error} />
+      <div className="flex gap-2">
+        <Button size="sm" variant="primary" disabled={!name.trim()} loading={save.isPending} onClick={() => save.mutate()}>
+          Save
+        </Button>
+        <Button size="sm" onClick={onDone}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export function Agents() {
@@ -59,6 +98,7 @@ export function Agents() {
     mutationFn: (a: AgentInfo) => api.patch(`/api/agents/${a.id}`, { disabled: !a.disabled }),
     onSuccess: invalidate,
   });
+  const [editing, setEditing] = useState<string | null>(null);
 
   return (
     <div>
@@ -102,30 +142,39 @@ export function Agents() {
                   <Bot className="size-5" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="font-medium break-all">{a.name}</span>
-                    {a.disabled && <Badge className="bg-red-50 text-red-600">disabled</Badge>}
-                    {a.owner.id !== me.id && <span className="text-xs text-zinc-500">linked to {a.owner.name}</span>}
-                    {a.enrolledVia && (
-                      <Badge className="bg-sky-50 text-sky-700">
-                        <KeyRound className="size-3" /> self-registered · {a.enrolledVia.name}
-                      </Badge>
-                    )}
-                  </div>
-                  {a.description && <p className="text-sm text-zinc-500">{a.description}</p>}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {a.projects.length ? (
-                      a.projects.map((p) => (
-                        <Link key={p.key} to={`/p/${p.key}`}>
-                          <Badge className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200">
-                            {p.key} · {p.role}
+                  {editing === a.id ? (
+                    <EditAgent agent={a} onDone={() => setEditing(null)} />
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-medium break-all">{a.name}</span>
+                        <button className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" title="Rename" onClick={() => setEditing(a.id)}>
+                          <Pencil className="size-3.5" />
+                        </button>
+                        {a.disabled && <Badge className="bg-red-50 text-red-600">disabled</Badge>}
+                        {a.owner.id !== me.id && <span className="text-xs text-zinc-500">linked to {a.owner.name}</span>}
+                        {a.enrolledVia && (
+                          <Badge className="bg-sky-50 text-sky-700">
+                            <KeyRound className="size-3" /> self-registered · {a.enrolledVia.name}
                           </Badge>
-                        </Link>
-                      ))
-                    ) : (
-                      <span className="text-xs text-zinc-400">Not in any project yet — add it from a project's Members tab.</span>
-                    )}
-                  </div>
+                        )}
+                      </div>
+                      {a.description && <p className="text-sm text-zinc-500">{a.description}</p>}
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {a.projects.length ? (
+                          a.projects.map((p) => (
+                            <Link key={p.key} to={`/p/${p.key}`}>
+                              <Badge className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200">
+                                {p.key} · {p.role}
+                              </Badge>
+                            </Link>
+                          ))
+                        ) : (
+                          <span className="text-xs text-zinc-400">Not in any project yet — add it from a project's Members tab.</span>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className="flex gap-2 max-sm:w-full max-sm:pl-12">
                   <Button size="sm" onClick={() => mintToken.mutate(a)} loading={mintToken.isPending && mintToken.variables?.id === a.id}>

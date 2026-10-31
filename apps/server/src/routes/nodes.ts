@@ -73,7 +73,11 @@ export default async function nodeRoutes(app: FastifyInstance, ctx: AppContext) 
     const spaceIds = spaces.map((w) => w.id);
     const projectIds = [...new Set(spaces.map((w) => w.projectId).filter((p): p is string => !!p))];
     const [people, projectRows, sessionJobs] = await Promise.all([
-      loadUsers(ctx.db, [...rows.map((n) => n.ownerId), ...spaces.flatMap((w) => [w.agentId, w.createdBy])]),
+      loadUsers(ctx.db, [
+        ...rows.map((n) => n.ownerId),
+        ...spaces.flatMap((w) => [w.agentId, w.createdBy]),
+        ...rows.flatMap((n) => n.runningAgents.map((a) => a.agentId)),
+      ]),
       projectIds.length
         ? ctx.db.select({ id: projects.id, key: projects.key, name: projects.name }).from(projects).where(inArray(projects.id, projectIds))
         : Promise.resolve([]),
@@ -111,12 +115,15 @@ export default async function nodeRoutes(app: FastifyInstance, ctx: AppContext) 
         status: w.status,
         error: w.error,
         session,
-        sessionError: !pending && last?.status === "failed" ? last.error : null,
+        // A failure only matters while the session is not in the state that job asked for.
+        sessionError:
+          !pending && last?.status === "failed" && (last.kind === "session.start") !== w.sessionRunning ? last.error : null,
         createdBy: w.createdBy ? (people.get(w.createdBy) ?? null) : null,
         createdAt: w.createdAt.toISOString(),
       };
     };
 
+    const online = (n: NodeRow) => !!n.lastSeenAt && now - n.lastSeenAt.getTime() < NODE_ONLINE_MS;
     return rows.map((n) => ({
       id: n.id,
       name: n.name,
@@ -127,11 +134,21 @@ export default async function nodeRoutes(app: FastifyInstance, ctx: AppContext) 
       version: n.version,
       workspaceRoot: n.workspaceRoot,
       capabilities: n.capabilities ?? null,
-      online: !!n.lastSeenAt && now - n.lastSeenAt.getTime() < NODE_ONLINE_MS,
+      online: online(n),
       lastSeenAt: n.lastSeenAt?.toISOString() ?? null,
       disabled: !!n.disabledAt,
       createdAt: n.createdAt.toISOString(),
       workspaces: spaces.filter((w) => w.nodeId === n.id).map(workspaceInfo),
+      // What it saw last is only current while it keeps checking in.
+      agents: online(n)
+        ? n.runningAgents
+            .filter((a) => people.has(a.agentId))
+            .map((a) => ({
+              agent: people.get(a.agentId)!,
+              cwd: a.cwd,
+              workspaceId: spaces.find((w) => w.nodeId === n.id && w.agentId === a.agentId)?.id ?? null,
+            }))
+        : [],
     }));
   }
 
@@ -323,8 +340,31 @@ export default async function nodeRoutes(app: FastifyInstance, ctx: AppContext) 
   /** Check-in: the node's facts, and which workspaces have a running session. */
   app.put("/api/node/state", async (req) => {
     const me = requireNode(req);
-    const { sessions, ...facts } = parse(nodeStateBody, req.body);
-    await ctx.db.update(nodes).set({ ...facts, lastSeenAt: new Date() }).where(eq(nodes.id, me.id));
+    const { sessions, agents, ...facts } = parse(nodeStateBody, req.body);
+    // Token prefixes name the agents; only the node owner's active agents are taken.
+    const prefixes = [...new Set(agents.map((a) => a.tokenPrefix))];
+    const known = prefixes.length
+      ? await ctx.db
+          .select({ prefix: apiTokens.prefix, agentId: users.id })
+          .from(apiTokens)
+          .innerJoin(users, eq(users.id, apiTokens.userId))
+          .where(
+            and(
+              inArray(apiTokens.prefix, prefixes),
+              isNull(apiTokens.revokedAt),
+              eq(users.kind, "agent"),
+              eq(users.ownerId, me.ownerId),
+              isNull(users.disabledAt),
+            ),
+          )
+      : [];
+    const byPrefix = new Map(known.map((k) => [k.prefix, k.agentId]));
+    const runningAgents: NodeRow["runningAgents"] = [];
+    for (const a of agents) {
+      const agentId = byPrefix.get(a.tokenPrefix);
+      if (agentId && !runningAgents.some((r) => r.agentId === agentId && r.cwd === a.cwd)) runningAgents.push({ agentId, cwd: a.cwd });
+    }
+    await ctx.db.update(nodes).set({ ...facts, runningAgents, lastSeenAt: new Date() }).where(eq(nodes.id, me.id));
     await ctx.db
       .update(workspaces)
       .set({ sessionRunning: sessions.length ? inArray(workspaces.id, sessions) : sql`false` })

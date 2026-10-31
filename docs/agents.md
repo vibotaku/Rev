@@ -12,6 +12,8 @@ Tasks an agent closes are recorded and shown as **agent-closed** (a dashed viole
 
 ## Setting up an agent
 
+Rename an agent, or change its description, with the pencil next to its name on **My agents**.
+
 To have Rev create agents on your own computers, ready to run Claude Code in their own workspaces, make those computers [nodes](nodes.md).
 
 In Rev, **My agents → Connect an agent** puts the steps below on one page, ready to copy. Paste an enrollment key you stored (or a `bao:<path>#<field>` reference, so the key never appears in a chat), or create one there. Then copy a prompt for Claude Code, which installs the plugin and the CLI, registers the machine and checks the connection. For other agents, copy the shell commands plus working instructions to put in the agent's `AGENTS.md` or system prompt.

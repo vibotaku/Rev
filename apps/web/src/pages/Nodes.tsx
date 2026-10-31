@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, FolderGit2, Play, Plus, Server, Square, Terminal, Trash2, X } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, FolderGit2, Pencil, Play, Plus, Server, Square, Terminal, Trash2, X } from "lucide-react";
 import { Link } from "react-router";
-import { workspaceSession, type NodeInfo, type ProjectInfo, type WorkspaceInfo } from "@rev/shared";
+import { workspaceSession, type NodeInfo, type NodeRunningAgent, type ProjectInfo, type WorkspaceInfo } from "@rev/shared";
 import { api } from "../api";
 import { useUser } from "../auth";
 import { CopyBlock } from "../components/CopyBlock";
@@ -89,8 +89,80 @@ const SESSION_LABEL: Record<WorkspaceInfo["session"], string> = {
   stopping: "Stopping…",
 };
 
+/** Expanded/collapsed state of a tree item, remembered in this browser. */
+function useExpanded(id: string, initial = true): [boolean, (open: boolean) => void] {
+  const key = `rev.nodes.open.${id}`;
+  const [open, setOpen] = useState(() => {
+    const saved = localStorage.getItem(key);
+    return saved === null ? initial : saved === "1";
+  });
+  return [
+    open,
+    (next) => {
+      localStorage.setItem(key, next ? "1" : "0");
+      setOpen(next);
+    },
+  ];
+}
+
+function Twisty({ open, onToggle, label }: { open: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
+    >
+      {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+    </button>
+  );
+}
+
+/** A branch of the tree: a heading that folds its children, drawn with a guide line. */
+function Branch({ id, title, count, children }: { id: string; title: string; count: number; children: React.ReactNode }) {
+  const [open, setOpen] = useExpanded(id);
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 py-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+        <Twisty open={open} onToggle={() => setOpen(!open)} label={title} />
+        {title} <span className="font-normal text-zinc-400">{count}</span>
+      </div>
+      {open && <div className="ml-2.5 border-l border-zinc-200 pl-3">{children}</div>}
+    </div>
+  );
+}
+
+/** Renames something in place: Enter saves, Escape cancels. */
+function InlineRename({ value, onSave, onCancel, saving }: { value: string; onSave: (v: string) => void; onCancel: () => void; saving: boolean }) {
+  const [text, setText] = useState(value);
+  const save = () => (text.trim() && text.trim() !== value ? onSave(text.trim()) : onCancel());
+  return (
+    <span className="flex items-center gap-1">
+      <Input
+        autoFocus
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") save();
+          if (e.key === "Escape") onCancel();
+        }}
+        className="!h-7 w-56 text-sm"
+        aria-label="New name"
+      />
+      <Button size="sm" variant="primary" loading={saving} onClick={save}>
+        Save
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onCancel}>
+        Cancel
+      </Button>
+    </span>
+  );
+}
+
 function WorkspaceRow({ node, ws, onChange }: { node: NodeInfo; ws: WorkspaceInfo; onChange: (n: NodeInfo) => void }) {
   const [copied, setCopied] = useState(false);
+  // Details start folded, unless something needs attention.
+  const [open, setOpen] = useExpanded(`ws.${ws.id}`, false);
   const act = useMutation({
     mutationFn: (action: "start" | "stop" | "remove") =>
       action === "remove" ? api.del<NodeInfo>(`/api/workspaces/${ws.id}`) : api.post<NodeInfo>(`/api/workspaces/${ws.id}/${action}`),
@@ -99,10 +171,12 @@ function WorkspaceRow({ node, ws, onChange }: { node: NodeInfo; ws: WorkspaceInf
   const busy = ws.session === "starting" || ws.session === "stopping";
   const canStart = !!node.capabilities?.tmux && !!node.capabilities?.claude;
   const attach = `tmux attach -t ${workspaceSession(ws.name)}`;
+  const problem = ws.error ?? ws.sessionError;
 
   return (
-    <div className="space-y-1.5 px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <div data-workspace={ws.name} className="space-y-1.5 py-2">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+        <Twisty open={open} onToggle={() => setOpen(!open)} label={`workspace ${ws.name}`} />
         <FolderGit2 className="size-4 shrink-0 text-zinc-400" />
         <span className="font-mono text-sm font-medium">{ws.name}</span>
         {ws.project && (
@@ -164,12 +238,29 @@ function WorkspaceRow({ node, ws, onChange }: { node: NodeInfo; ws: WorkspaceInf
           </button>
         </div>
       </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-7 text-xs text-zinc-500">
-        <span className="font-mono break-all">{ws.path ?? `${node.workspaceRoot}/${ws.name}`}</span>
-        <span className="break-all">{ws.repoUrl ? `from ${ws.repoUrl}` : "empty folder"}</span>
-      </div>
-      {(ws.error || ws.sessionError) && <p className="pl-7 text-xs whitespace-pre-wrap text-red-600">{ws.error ?? ws.sessionError}</p>}
+      {open && (
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-12 text-xs text-zinc-500">
+          <span className="font-mono break-all">{ws.path ?? `${node.workspaceRoot}/${ws.name}`}</span>
+          <span className="break-all">{ws.repoUrl ? `from ${ws.repoUrl}` : "empty folder"}</span>
+          {ws.createdBy && <span>created by {ws.createdBy.name}</span>}
+        </div>
+      )}
+      {problem && <p className="pl-12 text-xs whitespace-pre-wrap text-red-600">{problem}</p>}
       <ErrorBox error={act.error} />
+    </div>
+  );
+}
+
+/** An agent whose Claude Code session runs on the node but that the node did not create. */
+function RunningAgentRow({ agent, cwd }: { agent: NodeRunningAgent["agent"]; cwd: string | null }) {
+  return (
+    <div data-running-agent={agent.name} className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-2 pl-6">
+      <Bot className="size-4 shrink-0 text-zinc-400" />
+      <UserChip user={agent} />
+      <span className="flex items-center gap-1.5 text-xs text-emerald-700">
+        <span className="size-2 rounded-full bg-emerald-500" /> Running
+      </span>
+      <span className="font-mono text-xs break-all text-zinc-500">{cwd ?? "folder unknown"}</span>
     </div>
   );
 }
@@ -275,25 +366,44 @@ function Tool({ name, version }: { name: string; version: string | null | undefi
 function NodeCard({ node, meId, onChange }: { node: NodeInfo; meId: string; onChange: () => void }) {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [open, setOpen] = useExpanded(`node.${node.id}`);
   const replace = (n: NodeInfo) => {
     qc.setQueriesData<NodeInfo[]>({ queryKey: ["nodes"] }, (list) => list?.map((x) => (x.id === n.id ? n : x)));
     onChange();
   };
   const update = useMutation({
-    mutationFn: (body: { disabled: boolean }) => api.patch<NodeInfo>(`/api/nodes/${node.id}`, body),
-    onSuccess: replace,
+    mutationFn: (body: { disabled?: boolean; name?: string }) => api.patch<NodeInfo>(`/api/nodes/${node.id}`, body),
+    onSuccess: (n) => {
+      setRenaming(false);
+      replace(n);
+    },
   });
   const remove = useMutation({ mutationFn: () => api.del(`/api/nodes/${node.id}`), onSuccess: onChange });
+  const others = node.agents.filter((a) => !a.workspaceId);
+  const running = node.workspaces.filter((w) => w.session === "running").length + others.length;
 
   return (
     <Card>
       <div className="flex flex-wrap items-start gap-3 p-4">
+        <span className="mt-2">
+          <Twisty open={open} onToggle={() => setOpen(!open)} label={node.name} />
+        </span>
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white">
           <Server className="size-5" />
         </span>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="font-medium break-all">{node.name}</span>
+            {renaming ? (
+              <InlineRename value={node.name} saving={update.isPending} onCancel={() => setRenaming(false)} onSave={(name) => update.mutate({ name })} />
+            ) : (
+              <>
+                <span className="font-medium break-all">{node.name}</span>
+                <button className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" title="Rename node" onClick={() => setRenaming(true)}>
+                  <Pencil className="size-3.5" />
+                </button>
+              </>
+            )}
             <span className={cx("flex items-center gap-1 text-xs", node.online ? "text-emerald-700" : "text-zinc-500")}>
               <span className={cx("size-2 rounded-full", node.online ? "bg-emerald-500" : "bg-zinc-300")} />
               {node.online ? "online" : node.lastSeenAt ? `offline, last seen ${timeAgo(node.lastSeenAt)}` : "never connected"}
@@ -311,8 +421,13 @@ function NodeCard({ node, meId, onChange }: { node: NodeInfo; meId: string; onCh
               <Tool name="claude" version={node.capabilities?.claude} />
             </span>
           </div>
+          {!open && (
+            <div className="text-xs text-zinc-500">
+              {node.workspaces.length} workspace{node.workspaces.length === 1 ? "" : "s"} · {running} agent{running === 1 ? "" : "s"} running
+            </div>
+          )}
         </div>
-        <div className="flex gap-2 max-sm:w-full max-sm:pl-12">
+        <div className="flex gap-2 max-sm:w-full max-sm:pl-20">
           <Button size="sm" variant="primary" disabled={node.disabled} onClick={() => setAdding(true)}>
             <Plus className="size-3.5" /> New workspace
           </Button>
@@ -333,16 +448,27 @@ function NodeCard({ node, meId, onChange }: { node: NodeInfo; meId: string; onCh
         </div>
       </div>
       <ErrorBox error={update.error ?? remove.error} />
-      {node.workspaces.length ? (
-        <div className="divide-y divide-zinc-100 border-t border-zinc-100">
-          {node.workspaces.map((ws) => (
-            <WorkspaceRow key={ws.id} node={node} ws={ws} onChange={replace} />
-          ))}
+      {open && (
+        <div className="space-y-1 border-t border-zinc-100 px-4 py-2 sm:pl-12">
+          <Branch id={`node.${node.id}.workspaces`} title="Workspaces" count={node.workspaces.length}>
+            {node.workspaces.length ? (
+              node.workspaces.map((ws) => <WorkspaceRow key={ws.id} node={node} ws={ws} onChange={replace} />)
+            ) : (
+              <p className="py-2 text-sm text-zinc-400">None yet. Create one to get a folder with its own agent in {node.workspaceRoot || "the node's workspace folder"}.</p>
+            )}
+          </Branch>
+          <Branch id={`node.${node.id}.agents`} title="Other agents running here" count={others.length}>
+            {others.length ? (
+              others.map((a) => <RunningAgentRow key={`${a.agent.id}:${a.cwd}`} agent={a.agent} cwd={a.cwd} />)
+            ) : (
+              <p className="py-2 text-sm text-zinc-400">
+                {node.online
+                  ? "None right now. Claude Code sessions using Rev on this computer show up here."
+                  : "Shown while the node is online."}
+              </p>
+            )}
+          </Branch>
         </div>
-      ) : (
-        <p className="border-t border-zinc-100 px-4 py-3 text-sm text-zinc-400">
-          No workspaces yet. Create one to get a folder with its own agent in {node.workspaceRoot || "the node's workspace folder"}.
-        </p>
       )}
       {adding && (
         <NewWorkspace

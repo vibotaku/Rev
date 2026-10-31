@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { NodeInfo } from "@rev/shared";
 import { Client, startTestServer, type TestServer } from "../../server/test/helpers";
-import { NodeRunner, START_PROMPT, realSys, type NodeConfig, type Sys } from "../src/node";
+import { NodeRunner, START_PROMPT, lockNode, nodePaths, realSys, type NodeConfig, type Sys } from "../src/node";
 import { buildProgram } from "../src/program";
 
 const TRUST = " Quick safety check: Is this a project you created or one you trust?\n";
@@ -14,6 +14,8 @@ const TRUST = " Quick safety check: Is this a project you created or one you tru
 class FakeSys implements Sys {
   calls: string[][] = [];
   sessions = new Map<string, { dead: boolean; screen: string; cursor: number }>();
+  /** Other processes on the machine: pid → command line plus environment, and working directory. */
+  processes = new Map<number, { command: string; env: string; cwd: string }>();
 
   async exec(cmd: string, args: string[], opts?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number }) {
     this.calls.push([cmd, ...args, ...(opts?.cwd ? [`(in ${opts.cwd})`] : [])]);
@@ -25,6 +27,15 @@ class FakeSys implements Sys {
     }
     if (cmd === "git") return realSys.exec(cmd, args, opts);
     if (cmd === "claude") return out(args[0] === "--version" ? "2.1.0 (Claude Code)\n" : "");
+    if (cmd === "ps" && args[0] === "axww") return out([...this.processes].map(([pid, p]) => `  ${pid} ${p.command}`).join("\n") + "\n");
+    if (cmd === "ps" && args[0] === "-wwE") {
+      const p = this.processes.get(Number(args.at(-1)));
+      return out(p ? `${p.command} ${p.env}\n` : "");
+    }
+    if (cmd === "lsof") {
+      const p = this.processes.get(Number(args[args.indexOf("-p") + 1]));
+      return out(p ? `p1\nfcwd\nn${p.cwd}\n` : "");
+    }
     if (cmd !== "tmux") throw fail(`${cmd}: command not found`);
 
     const target = (flag = "-t") => this.sessions.get(args[args.indexOf(flag) + 1]!);
@@ -165,6 +176,29 @@ describe("rev node", () => {
     expect(keys).toEqual(["Down", "Enter"]);
   });
 
+  it("reports the Rev sessions running on the machine", async () => {
+    const ws = (await nodeInfo()).workspaces[0]!;
+    // Another Claude Code session, using its own agent config, in some repo.
+    const other = (await owner.post("/api/agents", { name: "claude-desk" })).json;
+    const token = (await owner.post(`/api/agents/${other.id}/tokens`, { name: "t" })).json.token as string;
+    const otherConfig = path.join(home, "desk.json");
+    writeFileSync(otherConfig, JSON.stringify({ url: `${baseUrl}/`, token }));
+    sys.processes.set(4242, { command: "node /plugins/rev/cli/rev.mjs mcp", env: `HOME=${home} REV_CONFIG=${otherConfig}`, cwd: "/code/desk" });
+    // The workspace's own session.
+    const wsConfig = path.join(home, ".config", "rev", "agents", `${ws.id}.json`);
+    sys.processes.set(4343, { command: "node /plugins/rev/cli/rev.mjs mcp", env: `REV_CONFIG=${wsConfig} HOME=${home}`, cwd: ws.path! });
+    // Not a Rev MCP server, and a Rev session for some other Rev instance.
+    sys.processes.set(4444, { command: "node server.js --rev mcp-ish", env: `HOME=${home}`, cwd: "/" });
+    sys.processes.set(4545, { command: "rev mcp", env: `REV_URL=https://elsewhere.example REV_TOKEN=${token} HOME=${home}`, cwd: "/x" });
+    runner.platform = "darwin";
+    await runner.checkIn();
+    expect((await nodeInfo()).agents.map((a) => [a.agent.name, a.cwd, a.workspaceId])).toEqual([
+      ["claude-desk", "/code/desk", null],
+      ["claude-box-web", ws.path, ws.id],
+    ]);
+    sys.processes.clear();
+  });
+
   it("tells a running session about newly assigned tasks", async () => {
     await runner.checkIn();
     const ws = (await nodeInfo()).workspaces[0]!;
@@ -192,6 +226,19 @@ describe("rev node", () => {
     expect(JSON.parse(readFileSync(path.join(home, ".config", "rev", "node-workspaces.json"), "utf8"))).toEqual({});
     // The folder is left alone.
     expect(existsSync(ws.path!)).toBe(true);
+  });
+
+  it("lets only one process serve a node", async () => {
+    const { lock } = nodePaths(env);
+    // Another live process holds it (the test runner's parent stands in for the service).
+    writeFileSync(lock, `${process.ppid}\n`);
+    await expect(lockNode(env)).rejects.toThrow(`already being served by process ${process.ppid}`);
+    // A lock left by a process that is gone is taken over, and released again.
+    writeFileSync(lock, "999999\n");
+    const unlock = await lockNode(env);
+    expect(readFileSync(lock, "utf8").trim()).toBe(String(process.pid));
+    await unlock();
+    expect(existsSync(lock)).toBe(false);
   });
 
   it("reports failed clones and leaves nothing behind", async () => {
