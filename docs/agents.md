@@ -39,7 +39,7 @@ The key (`rev_enroll_…`) is shown once. Store it like a password; for example 
 /rev:setup https://rev.example.com rev_enroll_…
 ```
 
-Instead of pasting the key, `/rev:setup https://rev.example.com bao:rev#enroll_key` makes Claude pipe it from OpenBao/Vault, so it never appears in the transcript. Claude checks Node.js, registers the machine (`<user>@<host>` by default, or ask for a name), saves the token to `~/.config/rev/config.json`, and verifies the connection.
+Instead of pasting the key, `/rev:setup https://rev.example.com bao:rev#enroll_key` makes Claude pipe it from OpenBao/Vault, so it never appears in the transcript. Claude checks Node.js, registers the agent (`<user>@<host>` by default, or ask for a name), saves the token to `~/.config/rev/config.json` (or its own file, if the machine already has an agent), points Claude Code in the project folder at it, and verifies the connection.
 
 The plugin provides:
 
@@ -64,7 +64,21 @@ bao kv get -mount=secret -field=enroll_key rev | rev register --url https://rev.
 rev whoami
 ```
 
-`rev register` refuses to overwrite an existing setup unless you pass `--force`. Agent names must be unique among the linked human's agents.
+Agent names must be unique among the linked human's agents.
+
+### Several agents on one machine
+
+A machine can hold one agent per repo (or per CI job). Each agent keeps its token in its own file, and `REV_CONFIG` (or `rev --config <file>`) picks one.
+
+- If the config file already holds an agent, `rev register` keeps it and saves the new agent next to it as `~/.config/rev/<name>.json`. `--force` replaces the saved agent instead.
+- `--repo <dir>` makes Claude Code in that folder use the new agent. It writes `.claude/settings.local.json` (Rev plugin on, `env.REV_CONFIG`) and keeps that file out of git through `.git/info/exclude`, worktrees included. Restart Claude Code there to pick it up.
+- `rev whoami --all` lists every agent saved on the machine, including node workspace agents, with their projects.
+
+```bash
+cd ~/src/game
+bao kv get -mount=secret -field=enroll_key rev | rev register --url https://rev.example.com --key - --name claude-mac-01-game --repo .
+rev --config ~/.config/rev/claude-mac-01-game.json whoami
+```
 
 For MCP clients other than Claude Code, configure a stdio server that runs `rev mcp` (for example `"command": "rev", "args": ["mcp"]`). For agents that read instruction files (`AGENTS.md`, Cursor rules, …), include the contents of [`plugins/rev/skills/workflow/SKILL.md`](../plugins/rev/skills/workflow/SKILL.md).
 
@@ -108,9 +122,9 @@ The review's owner (your linked human) then approves it and closes the task, or 
 
 | Command | Purpose |
 | --- | --- |
-| `rev register --url <url> [--key <key>\|-] [--name <name>] [--force]` | Self-register with an enrollment key and save the token |
+| `rev register --url <url> [--key <key>\|-] [--name <name>] [--repo <dir>] [--force]` | Self-register with an enrollment key and save the token. Keeps an agent already saved on the machine (see [Several agents on one machine](#several-agents-on-one-machine)) |
 | `rev login --url <url> --token <token>` | Verify and save a manually created token |
-| `rev whoami`, `rev projects` | Identity and project memberships |
+| `rev whoami [--all]`, `rev projects` | Identity and project memberships; `--all` lists every agent saved on the machine |
 | `rev tasks [--all-statuses]` | Your open tasks (all statuses with the flag) |
 | `rev task show <ref> [--save-snapshots <dir>]` | Task with source comments and their mark notes, exact timestamps, a text description of each annotation, and snapshot and frame-sheet downloads |
 | `rev task start <ref>` | Move to `in_progress` |
@@ -125,7 +139,7 @@ The review's owner (your linked human) then approves it and closes the task, or 
 | `rev review reply <commentId> <text> --review <ref>` | Reply in a thread |
 | `rev mcp` | Run the MCP server on stdio |
 
-Add `--json` before any command for machine-readable output, e.g. `rev --json tasks`.
+Add `--json` before any command for machine-readable output, e.g. `rev --json tasks`. `--config <file>` uses that agent's credentials file instead of `$REV_CONFIG` or `~/.config/rev/config.json`.
 
 Accepted files: PNG, JPEG, WebP, and GIF images; MP4, WebM, MOV, and MKV videos. MP4 (H.264) and WebM play immediately; other formats are transcoded on the server.
 

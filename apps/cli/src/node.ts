@@ -4,12 +4,13 @@
 // attach. What Claude Code may do unattended (claudeArgs) is set on this machine only.
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, chmod, copyFile, mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { gitUrl, workspaceName, workspaceSession, type NodeCapabilities, type NodeJob } from "@rev/shared";
 import { RevApi, RevApiError } from "./api";
+import { linkClaude } from "./config";
 import { VERSION } from "./version";
 
 const execFileAsync = promisify(execFile);
@@ -245,23 +246,7 @@ export class NodeRunner {
         });
       }
     }
-    const file = path.join(dir, ".claude", "settings.local.json");
-    type Settings = { enabledPlugins?: Record<string, boolean>; env?: Record<string, string>; permissions?: { allow?: string[] } };
-    const settings = (await readJson<Settings>(file)) ?? {};
-    settings.enabledPlugins = { ...settings.enabledPlugins, "rev@vibotaku": true };
-    settings.env = { ...settings.env, REV_CONFIG: agentConfig };
-    settings.permissions = { ...settings.permissions, allow: [...new Set([...(settings.permissions?.allow ?? []), "mcp__plugin_rev_rev"])] };
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(settings, null, 2) + "\n");
-    // Machine-specific: keep it out of commits.
-    const exclude = path.join(dir, ".git", "info", "exclude");
-    if (existsSync(path.join(dir, ".git"))) {
-      const current = (await readFile(exclude, "utf8").catch(() => "")) || "";
-      if (!current.split("\n").includes(".claude/settings.local.json")) {
-        await mkdir(path.dirname(exclude), { recursive: true });
-        await appendFile(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}.claude/settings.local.json\n`);
-      }
-    }
+    await linkClaude(dir, agentConfig, { allowRevTools: true });
   }
 
   private async entry(workspaceId: string | null) {

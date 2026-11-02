@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -245,21 +245,56 @@ describe("CLI commands", () => {
     await expect(cli(["task", "status", "WEB-1", "bogus"], env)).rejects.toThrow();
   });
 
-  it("self-registers with an enrollment key and refuses to clobber an existing setup", async () => {
+  it("self-registers with an enrollment key, and keeps the agent already saved when registering another", async () => {
     const enroll = (await admin.post("/api/enrollment-keys", { name: "ci", projects: [{ key: "WEB" }], maxUses: 5 })).json.key;
-    const configFile = path.join(server.dataDir, "enrolled", "config.json");
-    const env = { REV_CONFIG: configFile, REV_ENROLL_KEY: enroll };
+    const home = path.join(server.dataDir, "enrolled");
+    const configFile = path.join(home, "rev", "config.json");
+    // XDG_CONFIG_HOME keeps `whoami --all` out of the real ~/.config/rev.
+    const env = { XDG_CONFIG_HOME: home, REV_ENROLL_KEY: enroll };
     const reg = await cli(["register", "--url", `${baseUrl}/`, "--name", "ci-runner-1"], env);
     expect(reg.out).toContain("Registered as ci-runner-1 (agent, linked to Olivia)");
     expect(reg.out).toContain("Projects: WEB (member)");
     expect(statSync(configFile).mode & 0o777).toBe(0o600);
-    expect((await cli(["whoami"], { REV_CONFIG: configFile })).out).toContain("ci-runner-1 (agent)");
+    expect((await cli(["whoami"], { XDG_CONFIG_HOME: home })).out).toContain("ci-runner-1 (agent)");
 
-    await expect(cli(["register", "--url", baseUrl, "--name", "ci-runner-2"], env)).rejects.toThrow("already set up");
-    const forced = JSON.parse((await cli(["--json", "register", "--url", baseUrl, "--name", "ci-runner-2", "--force"], env)).out);
-    expect(forced.agent.name).toBe("ci-runner-2");
+    // A second agent for a repo: saved to its own file, and Claude Code in the repo is pointed at it.
+    const repo = path.join(server.dataDir, "repo-a");
+    mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    const second = JSON.parse((await cli(["--json", "register", "--url", baseUrl, "--name", "ci-runner-2", "--repo", repo], env)).out);
+    expect(second).toMatchObject({ config: path.join(home, "rev", "ci-runner-2.json"), keptConfig: configFile });
+    expect(statSync(second.config).mode & 0o777).toBe(0o600);
+    expect((await cli(["whoami"], { XDG_CONFIG_HOME: home })).out).toContain("ci-runner-1 (agent)");
+    expect((await cli(["--config", second.config, "whoami"], {})).out).toContain("ci-runner-2 (agent)");
+    expect(JSON.parse(readFileSync(path.join(repo, ".claude", "settings.local.json"), "utf8"))).toEqual({
+      enabledPlugins: { "rev@vibotaku": true },
+      env: { REV_CONFIG: second.config },
+    });
+    expect(readFileSync(path.join(repo, ".git", "info", "exclude"), "utf8")).toBe(".claude/settings.local.json\n");
+
+    // Nothing is overwritten: the same name again, or an explicit --config that holds an agent.
+    await expect(cli(["register", "--url", baseUrl, "--name", "ci-runner-2"], env)).rejects.toThrow("ci-runner-2.json already holds an agent");
+    await expect(cli(["--config", second.config, "register", "--url", baseUrl, "--name", "x"], env)).rejects.toThrow("Pass --force");
+
+    // --force replaces the saved agent; --repo also works in a git worktree (.git is a file).
+    const main = path.join(server.dataDir, "repo-main");
+    const worktree = path.join(server.dataDir, "repo-wt");
+    mkdirSync(path.join(main, ".git", "worktrees", "wt"), { recursive: true });
+    writeFileSync(path.join(main, ".git", "worktrees", "wt", "commondir"), "../..\n");
+    mkdirSync(worktree);
+    writeFileSync(path.join(worktree, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "wt")}\n`);
+    const forced = JSON.parse((await cli(["--json", "register", "--url", baseUrl, "--name", "ci-runner-3", "--force", "--repo", worktree], env)).out);
+    expect(forced).toMatchObject({ agent: { name: "ci-runner-3" }, config: configFile, keptConfig: null });
+    expect(readFileSync(path.join(main, ".git", "info", "exclude"), "utf8")).toContain(".claude/settings.local.json");
+
+    const all = JSON.parse((await cli(["--json", "whoami", "--all"], { XDG_CONFIG_HOME: home })).out);
+    expect(all).toEqual([
+      expect.objectContaining({ config: second.config, current: false, user: expect.objectContaining({ name: "ci-runner-2" }), projects: ["WEB"] }),
+      expect.objectContaining({ config: configFile, current: true, user: expect.objectContaining({ name: "ci-runner-3" }), projects: ["WEB"] }),
+    ]);
+    expect((await cli(["whoami", "--all"], { XDG_CONFIG_HOME: home })).out).toContain("ci-runner-3 (agent) on");
+
     await expect(
-      cli(["register", "--url", baseUrl, "--key", "rev_enroll_bogus-key", "--force"], { REV_CONFIG: configFile }),
+      cli(["register", "--url", baseUrl, "--key", "rev_enroll_bogus-key", "--force"], { XDG_CONFIG_HOME: home }),
     ).rejects.toThrow("Invalid enrollment key");
   });
 

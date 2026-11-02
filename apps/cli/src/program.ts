@@ -4,7 +4,7 @@ import path from "node:path";
 import { Argument, Command } from "commander";
 import { TASK_STATUS_LABELS, TASK_STATUSES, type TaskStatus } from "@rev/shared";
 import { RevApi } from "./api";
-import { configPath, loadConfig, saveConfig } from "./config";
+import { agentConfigFile, configPath, findConfigs, linkClaude, loadConfig, saveConfig, savedCredentials } from "./config";
 import { formatReview, formatTask, formatTaskLine } from "./format";
 import { assetNamesFor, createReviewKit, fetchSnapshots, submitReviewRound } from "./kit";
 import { runMcpServer } from "./mcp";
@@ -50,11 +50,19 @@ export function buildProgram(io: Io = defaultIo) {
     .description("Rev for agents: pull tasks, submit review kits (screenshots + videos), answer feedback.")
     .version(VERSION)
     .option("--json", "print machine-readable JSON")
+    .option("--config <file>", "the agent's credentials file (default: $REV_CONFIG, else ~/.config/rev/config.json)")
     .configureOutput({ writeOut: io.out, writeErr: io.err })
     .showHelpAfterError();
 
+  /** io.env, with REV_CONFIG set from --config when given. */
+  let env = io.env;
+  program.hook("preAction", (_program, action) => {
+    const file = action.optsWithGlobals().config as string | undefined;
+    if (file) env = { ...io.env, REV_CONFIG: path.resolve(file) };
+  });
+
   async function api() {
-    const cfg = await loadConfig(io.env);
+    const cfg = await loadConfig(env);
     if (!cfg.url || !cfg.token) {
       throw new Error(
         "Rev is not set up on this machine. Register with `rev register --url <url> --key <enrollment key>` " +
@@ -77,7 +85,7 @@ export function buildProgram(io: Io = defaultIo) {
     .action(async (opts: { url: string; token: string }, cmd: Command) => {
       const client = new RevApi(opts.url, opts.token);
       const me = await client.me();
-      const file = await saveConfig({ url: client.baseUrl, token: opts.token }, io.env);
+      const file = await saveConfig({ url: client.baseUrl, token: opts.token }, env);
       emit(cmd, { user: me.user, url: client.baseUrl, config: file }, () =>
         `Logged in as ${me.user.name} (${me.user.kind}) on ${client.baseUrl}\nSaved to ${file}`,
       );
@@ -85,38 +93,57 @@ export function buildProgram(io: Io = defaultIo) {
 
   program
     .command("register")
-    .description("Register this machine as a new agent using an enrollment key, and save its token")
+    .description(
+      "Register a new agent using an enrollment key, and save its token. If the config file already holds an agent, " +
+        "that agent is kept and the new one is saved next to it as <name>.json.",
+    )
     .requiredOption("--url <url>", "Rev base URL, e.g. https://rev.example.com")
     .option("--key <key>", "enrollment key (rev_enroll_...); `-` reads it from stdin; defaults to $REV_ENROLL_KEY")
     .option("--name <name>", "agent name, unique among your human's agents (default: <user>@<host>)")
     .option("--description <text>", "what/where this agent is (default: host and platform)")
-    .option("--force", "register a new agent even if this machine already has saved credentials")
+    .option("--repo <dir>", "make Claude Code in this folder use the new agent (.claude/settings.local.json, kept out of git)")
+    .option("--force", "replace the agent saved in the config file instead of keeping it")
     .action(
       async (
-        opts: { url: string; key?: string; name?: string; description?: string; force?: boolean },
+        opts: { url: string; key?: string; name?: string; description?: string; repo?: string; force?: boolean },
         cmd: Command,
       ) => {
-        const existing = await loadConfig(io.env);
-        if (existing.url && existing.token && !opts.force) {
-          throw new Error(
-            `This machine is already set up for ${existing.url} (${configPath(io.env)}). ` +
-              "Run `rev whoami` to check it, or pass --force to register another agent.",
-          );
+        const host = os.hostname().split(".")[0] || "host";
+        const name = opts.name ?? `${os.userInfo().username}@${host}`;
+        let file = configPath(env);
+        const kept = opts.force ? null : await savedCredentials(file);
+        if (kept) {
+          // Several agents can share a machine, each in its own file (REV_CONFIG picks one).
+          if (cmd.optsWithGlobals().config) {
+            throw new Error(`${file} already holds an agent. Pass --force to replace it, or choose another --config.`);
+          }
+          file = agentConfigFile(file, name);
+          if (await savedCredentials(file)) {
+            throw new Error(`${file} already holds an agent. Choose another --name, or pass --config <file>.`);
+          }
         }
         const key = (opts.key === "-" ? await readStdin() : (opts.key ?? io.env.REV_ENROLL_KEY ?? "")).trim();
         if (!key) throw new Error("No enrollment key: pass --key <key>, --key - (stdin), or set REV_ENROLL_KEY.");
-        const host = os.hostname().split(".")[0] || "host";
-        const name = opts.name ?? `${os.userInfo().username}@${host}`;
         const description = opts.description ?? `Registered from ${host} (${process.platform} ${process.arch}) with rev ${VERSION}`;
         const baseUrl = opts.url.replace(/\/+$/, "");
         const reg = await RevApi.register(baseUrl, { key, name, description });
-        const file = await saveConfig({ url: baseUrl, token: reg.token }, io.env);
+        await saveConfig({ url: baseUrl, token: reg.token }, env, file);
+        const linked = opts.repo ? await linkClaude(path.resolve(opts.repo), file) : null;
         const projects = reg.projects.map((p) => `${p.key} (${p.role})`).join(", ") || "none yet (ask your human to add you)";
-        emit(cmd, { agent: reg.agent, projects: reg.projects, url: baseUrl, config: file }, () =>
+        emit(cmd, { agent: reg.agent, projects: reg.projects, url: baseUrl, config: file, keptConfig: kept ? configPath(env) : null, claudeSettings: linked }, () =>
           [
             `Registered as ${reg.agent.name} (agent, linked to ${reg.agent.owner.name}) on ${baseUrl}`,
             `Projects: ${projects}`,
             `Saved to ${file}`,
+            ...(kept ? [`Kept the agent already saved in ${configPath(env)}.`] : []),
+            ...(linked
+              ? [`Claude Code in ${path.dirname(path.dirname(linked))} now uses this agent (${linked}). Restart Claude Code there to pick it up.`]
+              : kept
+                ? [
+                    `Use it with \`rev --config ${file} …\`. For Claude Code in a repo, set "env": { "REV_CONFIG": "${file}" }`,
+                    `and "enabledPlugins": { "rev@vibotaku": true } in the repo's .claude/settings.local.json.`,
+                  ]
+                : []),
           ].join("\n"),
         );
       },
@@ -125,11 +152,45 @@ export function buildProgram(io: Io = defaultIo) {
   program
     .command("whoami")
     .description("Show the authenticated account")
-    .action(async (_opts, cmd: Command) => {
+    .option("--all", "list every agent saved on this machine, with its projects")
+    .action(async (opts: { all?: boolean }, cmd: Command) => {
+      if (opts.all) return whoamiAll(cmd);
       const client = await api();
       const me = await client.me();
-      emit(cmd, me, () => `${me.user.name} (${me.user.kind}) on ${client.baseUrl}\nconfig: ${configPath(io.env)}`);
+      emit(cmd, me, () => `${me.user.name} (${me.user.kind}) on ${client.baseUrl}\nconfig: ${configPath(env)}`);
     });
+
+  /** The agents in the config folders (this one, the default one) and the agents of node workspaces. */
+  async function whoamiAll(cmd: Command) {
+    const current = configPath(env);
+    const { REV_CONFIG: _, ...withoutOverride } = io.env;
+    const dirs = [path.dirname(current), path.dirname(configPath(withoutOverride)), nodePaths(io.env).agents];
+    const agents = await Promise.all(
+      (await findConfigs(dirs)).map(async ({ file, config }) => {
+        const client = new RevApi(config.url, config.token);
+        try {
+          const [me, projects] = await Promise.all([client.me(), client.projects()]);
+          return { config: file, current: file === current, url: client.baseUrl, user: me.user, projects: projects.map((p) => p.key) };
+        } catch (e) {
+          return { config: file, current: file === current, url: client.baseUrl, error: (e as Error).message };
+        }
+      }),
+    );
+    emit(cmd, agents, () =>
+      agents.length
+        ? agents
+            .map((a) =>
+              [
+                a.user ? `${a.user.name} (${a.user.kind}) on ${a.url}` : `? (${a.error}) on ${a.url}`,
+                a.current ? "  ← current" : "",
+                `\n  config: ${a.config}`,
+                a.projects ? `\n  projects: ${a.projects.join(", ") || "none"}` : "",
+              ].join(""),
+            )
+            .join("\n")
+        : "No agents are saved on this machine.",
+    );
+  }
 
   program
     .command("projects")

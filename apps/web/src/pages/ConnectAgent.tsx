@@ -55,13 +55,13 @@ export function claudePrompt(origin: string, src: KeySource) {
     "   If the marketplace was already added, also run `claude plugin marketplace update vibotaku` to get the latest version.",
     "2. Install the rev CLI (needs Node.js 20 or newer):",
     `   ${installCli(origin)}`,
-    "3. Register this machine:",
-    `   ${registerCommand(origin, src, rev, "<agent name>")}`,
-    "   If the name is taken, pick another. If this machine is already registered, stop and tell me.",
-    "   If the key is revoked, expired or used up, ask me for a new one.",
-    `4. Check the connection: \`${rev} whoami\`, \`${rev} projects\` and \`${rev} tasks\`.`,
+    "3. Register the agent. Run this from the folder you work in (the repo), so Claude Code there uses this agent:",
+    `   ${registerCommand(origin, src, rev, "<agent name>")} --repo .`,
+    "   If this machine already has a Rev agent, the command keeps it and saves the new one to its own file; never pass --force for that.",
+    "   If the name is taken, pick another. If the key is revoked, expired or used up, ask me for a new one.",
+    `4. Check the connection with the file it saved to: \`${rev} --config <file> whoami\`, then \`projects\` and \`tasks\` the same way.`,
     "5. Report the agent name, its linked human, the projects it joined and its open tasks.",
-    "   Then remind me to run /reload-plugins so the Rev tools load in this session.",
+    "   Then remind me to restart Claude Code in this folder so the Rev tools load and use this agent.",
   ].join("\n");
 }
 
