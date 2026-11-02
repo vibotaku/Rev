@@ -41594,17 +41594,21 @@ Saved to ${file2}`
       const baseUrl = opts.url.replace(/\/+$/, "");
       const reg = await RevApi.register(baseUrl, { key, name: name2, description });
       await saveConfig({ url: baseUrl, token: reg.token }, env, file2);
-      const linked = opts.repo ? await linkClaude(path7.resolve(opts.repo), file2) : null;
+      let linked = null;
+      let linkError = null;
+      if (opts.repo) linked = await linkClaude(path7.resolve(opts.repo), file2).catch((e) => (linkError = e.message, null));
       const projects = reg.projects.map((p) => `${p.key} (${p.role})`).join(", ") || "none yet (ask your human to add you)";
+      const data = { agent: reg.agent, projects: reg.projects, url: baseUrl, config: file2, keptConfig: kept ? configPath(env) : null, claudeSettings: linked, claudeSettingsError: linkError };
       emit(
         cmd,
-        { agent: reg.agent, projects: reg.projects, url: baseUrl, config: file2, keptConfig: kept ? configPath(env) : null, claudeSettings: linked },
+        data,
         () => [
           `Registered as ${reg.agent.name} (agent, linked to ${reg.agent.owner.name}) on ${baseUrl}`,
           `Projects: ${projects}`,
           `Saved to ${file2}`,
           ...kept ? [`Kept the agent already saved in ${configPath(env)}.`] : [],
-          ...linked ? [`Claude Code in ${path7.dirname(path7.dirname(linked))} now uses this agent (${linked}). Restart Claude Code there to pick it up.`] : kept ? [
+          ...linkError ? [`Could not point Claude Code at this agent: ${linkError}`] : [],
+          ...linked ? [`Claude Code in ${path7.dirname(path7.dirname(linked))} now uses this agent (${linked}). Restart Claude Code there to pick it up.`] : kept || linkError ? [
             `Use it with \`rev --config ${file2} \u2026\`. For Claude Code in a repo, set "env": { "REV_CONFIG": "${file2}" }`,
             `and "enabledPlugins": { "rev@vibotaku": true } in the repo's .claude/settings.local.json.`
           ] : []

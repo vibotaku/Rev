@@ -286,9 +286,19 @@ describe("CLI commands", () => {
     expect(forced).toMatchObject({ agent: { name: "ci-runner-3" }, config: configFile, keptConfig: null });
     expect(readFileSync(path.join(main, ".git", "info", "exclude"), "utf8")).toContain(".claude/settings.local.json");
 
+    // A settings file that isn't JSON doesn't hide that the agent was registered and saved.
+    const broken = path.join(server.dataDir, "repo-broken");
+    mkdirSync(path.join(broken, ".claude"), { recursive: true });
+    writeFileSync(path.join(broken, ".claude", "settings.local.json"), "{ not json");
+    const partly = await cli(["register", "--url", baseUrl, "--name", "ci-runner-4", "--repo", broken], env);
+    expect(partly.out).toContain("Saved to " + path.join(home, "rev", "ci-runner-4.json"));
+    expect(partly.out).toContain("Could not point Claude Code at this agent: Cannot update");
+    expect(readFileSync(path.join(broken, ".claude", "settings.local.json"), "utf8")).toBe("{ not json");
+
     const all = JSON.parse((await cli(["--json", "whoami", "--all"], { XDG_CONFIG_HOME: home })).out);
     expect(all).toEqual([
       expect.objectContaining({ config: second.config, current: false, user: expect.objectContaining({ name: "ci-runner-2" }), projects: ["WEB"] }),
+      expect.objectContaining({ config: path.join(home, "rev", "ci-runner-4.json"), current: false, projects: ["WEB"] }),
       expect.objectContaining({ config: configFile, current: true, user: expect.objectContaining({ name: "ci-runner-3" }), projects: ["WEB"] }),
     ]);
     expect((await cli(["whoami", "--all"], { XDG_CONFIG_HOME: home })).out).toContain("ci-runner-3 (agent) on");
