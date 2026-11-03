@@ -1,29 +1,51 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Bot, Pencil, UserCheck } from "lucide-react";
+import { ArrowLeft, Bot, Check, CornerLeftUp, Lightbulb, Pencil, Plus, UserCheck, X } from "lucide-react";
 import { Link, useParams } from "react-router";
 import {
+  ACCEPTED_TASK_STATUSES,
   formatTimestamp,
   TASK_PRIORITIES,
   TASK_STATUS_LABELS,
-  TASK_STATUSES,
   type TaskActivityInfo,
   type TaskDetail,
+  type TaskInfo,
   type TaskPriority,
   type TaskStatus,
 } from "@rev/shared";
 import { api } from "../api";
-import { useMembers } from "./Project";
-import { Avatar, Button, Card, CommentStatusBadge, ErrorBox, Field, Input, Markdown, PageLoader, ReviewStatusBadge, Select, Textarea, UserChip } from "../components/ui";
-import { cx, reviewRefPath, timeAgo } from "../lib";
+import { TaskRow } from "../components/lists";
+import { useMembers, useProject } from "./Project";
+import { CreateTask, labelsOf, useDecideProposals, useProjectTasks } from "./ProjectTasks";
+import {
+  Avatar,
+  Button,
+  Card,
+  CommentStatusBadge,
+  ErrorBox,
+  Field,
+  Input,
+  LabelInput,
+  LabelList,
+  Markdown,
+  PageLoader,
+  ReviewStatusBadge,
+  Select,
+  Textarea,
+  UserChip,
+} from "../components/ui";
+import { cx, reviewRefPath, taskPath, timeAgo } from "../lib";
 import { AgentContext } from "../review/AgentContext";
 
 function describeActivity(a: TaskActivityInfo, names: Map<string, string>) {
   const d = (a.data ?? {}) as Record<string, string | null>;
   switch (a.kind) {
     case "created":
-      return "created the task";
+      return (a.data as { proposed?: boolean } | null)?.proposed ? "proposed the task" : "created the task";
     case "status":
+      if (d.from === "proposed") {
+        return d.to === "cancelled" ? "rejected the proposal" : `accepted the proposal into ${TASK_STATUS_LABELS[d.to as TaskStatus] ?? d.to}`;
+      }
       return `moved it from ${TASK_STATUS_LABELS[d.from as TaskStatus] ?? d.from} to ${TASK_STATUS_LABELS[d.to as TaskStatus] ?? d.to}`;
     case "assign":
       return d.to ? `assigned it to ${names.get(d.to) ?? "someone"}` : "unassigned it";
@@ -48,7 +70,11 @@ export function TaskPage() {
     refetchInterval: 20_000,
   });
   const { data: members } = useMembers(key);
+  const { data: project } = useProject(key);
+  const { data: projectTasks } = useProjectTasks(key);
+  const decide = useDecideProposals(key ?? "");
   const [editing, setEditing] = useState<{ title: string; description: string } | null>(null);
+  const [addingSubtask, setAddingSubtask] = useState(false);
   const [comment, setComment] = useState("");
   const [reviewNote, setReviewNote] = useState("");
 
@@ -84,6 +110,17 @@ export function TaskPage() {
   if (!task) return <div className="p-8"><ErrorBox error={error} /></div>;
   const names = new Map((members ?? []).map((m) => [m.user.id, m.user.name]));
   const assignable = (members ?? []).filter((m) => task.can.assignableUserIds.includes(m.user.id));
+  const editable = task.can.edit || task.can.editProposal;
+  const below = descendants(task.ref, projectTasks ?? []);
+  const parentOptions = (projectTasks ?? [])
+    .filter((t) => t.ref !== task.ref && !below.has(t.ref) && t.status !== "cancelled")
+    .sort((a, b) => a.number - b.number);
+  const proposedChildren = task.children.filter((c) => c.status === "proposed");
+  const acceptTo = (status: TaskStatus, withChildren = false) =>
+    decide.mutate(
+      { refs: [task.ref, ...(withChildren ? proposedChildren.map((c) => c.ref) : [])], status },
+      { onSuccess: () => qc.invalidateQueries({ queryKey: ["task", ref] }) },
+    );
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8">
@@ -93,7 +130,44 @@ export function TaskPage() {
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-6">
           <div>
-            <div className="font-mono text-sm text-zinc-500">{task.ref}</div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-500">
+              <span className="font-mono">{task.ref}</span>
+              {task.parent && (
+                <Link to={taskPath(task.parent.ref)} className="flex min-w-0 items-center gap-1 hover:text-zinc-800">
+                  <CornerLeftUp className="size-3.5 shrink-0" />
+                  <span className="shrink-0">Sub-task of</span>
+                  <span className="font-mono">{task.parent.ref}</span>
+                  <span className="truncate">{task.parent.title}</span>
+                </Link>
+              )}
+            </div>
+            {task.status === "proposed" && (
+              <div className="my-3 rounded-md border border-dashed border-sky-400 bg-sky-50 p-3 text-sm text-sky-900" data-proposal>
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <Lightbulb className="size-4" /> Proposed by {task.createdBy.name}
+                  {task.createdBy.kind === "agent" ? " (agent)" : ""}
+                </div>
+                <p className="mt-1 text-sky-800">
+                  It isn't on the board's work columns yet. Accept it to add it to To do (its assignee can then work on it), or reject it.
+                </p>
+                {task.can.decideProposal && (
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    <Button size="sm" variant="primary" loading={decide.isPending} onClick={() => acceptTo("todo")}>
+                      <Check className="size-3.5" /> Accept
+                    </Button>
+                    {proposedChildren.length > 0 && (
+                      <Button size="sm" disabled={decide.isPending} onClick={() => acceptTo("todo", true)}>
+                        <Check className="size-3.5" /> Accept with its {proposedChildren.length} proposed sub-task{proposedChildren.length === 1 ? "" : "s"}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" disabled={decide.isPending} onClick={() => acceptTo("cancelled")}>
+                      <X className="size-3.5" /> Reject
+                    </Button>
+                  </div>
+                )}
+                <ErrorBox error={decide.error} />
+              </div>
+            )}
             {editing ? (
               <div className="mt-2 space-y-3">
                 <Input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} className="text-lg font-semibold" />
@@ -109,7 +183,7 @@ export function TaskPage() {
               <>
                 <div className="mt-1 flex items-start gap-2">
                   <h1 className="flex-1 text-2xl font-semibold tracking-tight">{task.title}</h1>
-                  {task.can.edit && (
+                  {editable && (
                     <Button variant="ghost" size="sm" onClick={() => setEditing({ title: task.title, description: task.description })}>
                       <Pencil className="size-3.5" /> Edit
                     </Button>
@@ -123,6 +197,35 @@ export function TaskPage() {
               </>
             )}
           </div>
+
+          {(task.children.length > 0 || task.can.edit) && (
+            <section className="space-y-2" data-subtasks>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-zinc-700">
+                  Sub-tasks{" "}
+                  {task.children.length > 0 && (
+                    <span className="font-normal text-zinc-400">
+                      {task.subtasks.done}/{task.subtasks.total} done
+                    </span>
+                  )}
+                </h2>
+                {task.can.edit && project?.can.createTask && (
+                  <Button size="sm" variant="ghost" onClick={() => setAddingSubtask(true)}>
+                    <Plus className="size-3.5" /> Add sub-task
+                  </Button>
+                )}
+              </div>
+              {task.children.length > 0 ? (
+                <Card className="divide-y divide-zinc-100">
+                  {task.children.map((c) => (
+                    <TaskRow key={c.id} task={c} />
+                  ))}
+                </Card>
+              ) : (
+                <p className="text-xs text-zinc-400">No sub-tasks. Break the work down with Add sub-task.</p>
+              )}
+            </section>
+          )}
 
           {task.sourceComments.length > 0 && (
             <section className="space-y-2">
@@ -209,7 +312,12 @@ export function TaskPage() {
                 disabled={!task.can.updateStatus}
                 onChange={(e) => update.mutate({ status: e.target.value })}
               >
-                {TASK_STATUSES.map((s) => (
+                {task.status === "proposed" && (
+                  <option value="proposed" disabled>
+                    {TASK_STATUS_LABELS.proposed}
+                  </option>
+                )}
+                {ACCEPTED_TASK_STATUSES.map((s) => (
                   <option key={s} value={s}>
                     {TASK_STATUS_LABELS[s]}
                   </option>
@@ -237,13 +345,37 @@ export function TaskPage() {
               )}
             </Field>
             <Field label="Priority">
-              <Select value={task.priority} disabled={!task.can.edit} onChange={(e) => update.mutate({ priority: e.target.value as TaskPriority })}>
+              <Select value={task.priority} disabled={!editable} onChange={(e) => update.mutate({ priority: e.target.value as TaskPriority })}>
                 {TASK_PRIORITIES.map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>
                 ))}
               </Select>
+            </Field>
+            <Field label="Parent task">
+              {editable ? (
+                <Select value={task.parent?.ref ?? ""} onChange={(e) => update.mutate({ parent: e.target.value || null })}>
+                  <option value="">None (top-level task)</option>
+                  {task.parent && !parentOptions.some((t) => t.ref === task.parent!.ref) && <option value={task.parent.ref}>{task.parent.ref}</option>}
+                  {parentOptions.map((t) => (
+                    <option key={t.id} value={t.ref}>
+                      {t.ref} {t.title.length > 40 ? `${t.title.slice(0, 40)}…` : t.title}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <div className="py-1 text-sm text-zinc-600">{task.parent ? `${task.parent.ref} ${task.parent.title}` : "None"}</div>
+              )}
+            </Field>
+            <Field label="Labels">
+              {editable ? (
+                <LabelInput value={task.labels} onChange={(labels) => update.mutate({ labels })} suggestions={labelsOf(projectTasks)} />
+              ) : task.labels.length ? (
+                <LabelList labels={task.labels} className="py-1" />
+              ) : (
+                <div className="py-1 text-sm text-zinc-400">None</div>
+              )}
             </Field>
             <ErrorBox error={update.error} />
             {task.closure && (
@@ -258,7 +390,8 @@ export function TaskPage() {
             )}
             <div className="space-y-1 border-t border-zinc-100 pt-3 text-xs text-zinc-500">
               <div>
-                Created by <span className="text-zinc-700">{task.createdBy.name}</span> {timeAgo(task.createdAt)}
+                {task.status === "proposed" || task.activity[0]?.data?.proposed ? "Proposed" : "Created"} by{" "}
+                <span className="text-zinc-700">{task.createdBy.name}</span> {timeAgo(task.createdAt)}
               </div>
               {task.sourceReview && (
                 <div>
@@ -295,8 +428,22 @@ export function TaskPage() {
           </Card>
         </aside>
       </div>
+      {addingSubtask && project && <CreateTask project={project} parentRef={task.ref} onClose={() => setAddingSubtask(false)} />}
     </div>
   );
+}
+
+/** Refs of every task below `ref`, so it can't be given one of them as its parent. */
+function descendants(ref: string, tasks: TaskInfo[]) {
+  const below = new Set<string>();
+  const walk = (r: string) => {
+    for (const t of tasks) if (t.parent?.ref === r && !below.has(t.ref)) {
+      below.add(t.ref);
+      walk(t.ref);
+    }
+  };
+  walk(ref);
+  return below;
 }
 
 /** Who closed the task and whether a human has reviewed that closure. */

@@ -76,6 +76,29 @@ export async function serializeTasks(db: Db, rows: TaskRow[]): Promise<TaskInfo[
       .where(inArray(reviews.id, reviewIds));
     for (const r of rs) sourceReviews.set(r.id, { id: r.id, ref: reviewRef(r.key, r.number), title: r.title });
   }
+  const parentIds = unique(rows.map((t) => t.parentId));
+  const parents = new Map<string, { id: string; ref: string; title: string }>();
+  if (parentIds.length) {
+    const ps = await db
+      .select({ id: tasks.id, number: tasks.number, title: tasks.title, key: projects.key })
+      .from(tasks)
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(inArray(tasks.id, parentIds));
+    for (const p of ps) parents.set(p.id, { id: p.id, ref: taskRef(p.key, p.number), title: p.title });
+  }
+  const subtasks = new Map<string, { total: number; done: number }>();
+  const childRows = await db
+    .select({ parentId: tasks.parentId, status: tasks.status, n: count() })
+    .from(tasks)
+    .where(inArray(tasks.parentId, rows.map((t) => t.id)))
+    .groupBy(tasks.parentId, tasks.status);
+  for (const c of childRows) {
+    if (!c.parentId || c.status === "cancelled") continue;
+    const s = subtasks.get(c.parentId) ?? { total: 0, done: 0 };
+    s.total += Number(c.n);
+    if (c.status === "done") s.done += Number(c.n);
+    subtasks.set(c.parentId, s);
+  }
   return rows.map((t) => {
     const key = keys.get(t.projectId) ?? "?";
     return {
@@ -91,6 +114,9 @@ export async function serializeTasks(db: Db, rows: TaskRow[]): Promise<TaskInfo[
       assignee: t.assigneeId ? (userMap.get(t.assigneeId) ?? unknownUser(t.assigneeId)) : null,
       createdBy: userMap.get(t.createdBy) ?? unknownUser(t.createdBy),
       sourceReview: t.sourceReviewId ? (sourceReviews.get(t.sourceReviewId) ?? null) : null,
+      parent: t.parentId ? (parents.get(t.parentId) ?? null) : null,
+      labels: t.labels,
+      subtasks: subtasks.get(t.id) ?? { total: 0, done: 0 },
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),
       closure:

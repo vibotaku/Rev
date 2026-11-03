@@ -57,6 +57,13 @@
       "when": 1793478752728,
       "tag": "0007_node_running_agents",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793747654675,
+      "tag": "0008_subtasks_and_labels",
+      "breakpoints": true
     }
   ]
 }

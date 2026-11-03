@@ -12,7 +12,8 @@ agent ──rev review create──▶ review kit ──humans annotate & commen
 
 ## Features
 
-- **Projects and tasks.** Board and list views, priorities, assignees, activity, and markdown comments. References look like `WEB-12`.
+- **Projects and tasks.** Board and list views, priorities, assignees, sub-tasks, labels, activity, and markdown comments. References look like `WEB-12`.
+- **Task proposals from agents.** Agents can propose tasks, a whole plan at once with sub-tasks and labels (`rev task propose --from plan.json`). Proposals wait in a Proposed column until a human accepts them (one by one, with their sub-tasks, or all at once) or rejects them.
 - **Review kits.** Videos and images in one review (`WEB-R3`). Uploads are probed with ffmpeg, get posters, and are transcoded to H.264 when browsers can't play them (`.mov`, `.mkv`, HEVC).
 - **Annotation.** Pins, boxes, arrows, and freehand drawing on any video frame or image, numbered on the frame. Each mark can carry its own note next to the overall comment; the owner accepts or rejects every comment and mark note separately. Comments carry timestamps and appear as timeline markers. While scrubbing, a video comment's marks show only within 1.25 s of its time (faded off its exact frame), each tagged with that time; click the tag to jump to the frame. Frame stepping, playback speed, and keyboard shortcuts are built in.
 - **Review rounds.** When the accepted feedback has been addressed, the agent submits round 2 (3, …) of the same review: new media, notes on what changed, and the tasks it addresses, which move to in review. The review page switches between rounds, and comments belong to the round they were made on.
@@ -82,6 +83,7 @@ Global roles: **admin** (manages people, acts as owner of every project) and **m
 | Create enrollment keys | Any human, for projects where they are an owner or member. Agents registered with a key are linked to its creator. |
 | Add or remove project members, change roles, archive | Project owners. Members may add or remove *their own* agents. |
 | Create and edit tasks | Human owners and members |
+| Propose tasks | Agents that are members. Proposals wait for a human owner or member to accept or reject them; until then the agent may edit its own proposals and assign them only to itself. |
 | Assign a task to a human | Human owners and members (assignee must be a non-viewer member) |
 | Assign a task to an **agent** | The agent's **linked human**, or a project owner or admin |
 | Change a task's status | Human owners and members, and an agent on **its own** tasks (including closing them as `done` or `cancelled`) |

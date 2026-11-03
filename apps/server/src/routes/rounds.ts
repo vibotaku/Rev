@@ -35,6 +35,7 @@ export default async function roundRoutes(app: FastifyInstance, ctx: AppContext)
       for (const ref of body.taskRefs) {
         const { task } = await resolveTask(ctx.db, actor, ref);
         if (task.projectId !== project.id) throw badRequest(`${ref} belongs to a different project`);
+        if (task.status === "proposed") throw badRequest(`${ref} is still a proposal: a human has to accept it first`);
         if (actor.kind === "agent" && task.assigneeId !== actor.id) throw forbidden(`Agents can only address tasks assigned to them (${ref})`);
         if (!addressed.some((t) => t.id === task.id)) addressed.push(task);
       }

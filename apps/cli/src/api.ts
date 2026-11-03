@@ -14,8 +14,20 @@ import {
   type ReviewStatus,
   type TaskDetail,
   type TaskInfo,
+  type TaskPriority,
   type TaskStatus,
 } from "@rev/shared";
+
+/** A task to propose; `parent` is a task ref or the `key` of an earlier item in the same call. */
+export interface TaskProposal {
+  key?: string;
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+  parent?: string | null;
+  labels?: string[];
+  assigneeId?: string | null;
+}
 
 export class RevApiError extends Error {
   constructor(
@@ -42,8 +54,8 @@ export class RevApi {
     return /^https?:\/\//.test(pathOrUrl) ? pathOrUrl : `${this.baseUrl}${pathOrUrl}`;
   }
 
-  webUrl(kind: "tasks" | "reviews", projectKey: string, number: number) {
-    return `${this.baseUrl}/p/${projectKey}/${kind}/${number}`;
+  webUrl(kind: "tasks" | "reviews", projectKey: string, number?: number) {
+    return `${this.baseUrl}/p/${projectKey}/${kind}${number === undefined ? "" : `/${number}`}`;
   }
 
   private async send(method: string, pathname: string, body?: RequestInit["body"], headers: Record<string, string> = {}, signal?: AbortSignal) {
@@ -143,6 +155,17 @@ export class RevApi {
   myTasks(statuses?: TaskStatus[]) {
     const q = statuses?.length ? `?status=${statuses.join(",")}` : "";
     return this.request<TaskInfo[]>("GET", `/api/tasks${q}`);
+  }
+
+  /** Every task in a project, any assignee. */
+  projectTasks(projectKey: string, statuses?: TaskStatus[]) {
+    const q = statuses?.length ? `?status=${statuses.join(",")}` : "";
+    return this.request<TaskInfo[]>("GET", `/api/projects/${encodeURIComponent(projectKey)}/tasks${q}`);
+  }
+
+  /** Proposes tasks (all or none). Agents' tasks wait as "proposed" until a human accepts them. */
+  proposeTasks(projectKey: string, tasks: TaskProposal[]) {
+    return this.request<TaskInfo[]>("POST", `/api/projects/${encodeURIComponent(projectKey)}/tasks/bulk`, { tasks });
   }
 
   task(ref: string) {

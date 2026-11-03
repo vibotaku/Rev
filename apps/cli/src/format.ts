@@ -49,9 +49,25 @@ export function statusLabel(t: Pick<TaskInfo, "status" | "closure">) {
   return t.closure.by.id === t.closure.reviewedBy?.id ? label : `${label} (reviewed by ${t.closure.reviewedBy?.name})`;
 }
 
-export function formatTaskLine(t: TaskInfo) {
+export function formatTaskLine(t: TaskInfo, indent = "") {
   const prio = t.priority !== "none" ? ` [${t.priority}]` : "";
-  return `${t.ref.padEnd(10)} ${statusLabel(t).padEnd(12)}${prio} ${t.title}`;
+  const labels = t.labels.length ? `  ${t.labels.map((l) => `#${l}`).join(" ")}` : "";
+  const sub = t.subtasks.total ? `  (${t.subtasks.done}/${t.subtasks.total} sub-tasks done)` : "";
+  return `${(indent + t.ref).padEnd(10)} ${statusLabel(t).padEnd(12)}${prio} ${t.title}${labels}${sub}`;
+}
+
+/** Tasks as a tree: each sub-task indented under its parent when both are in the list. */
+export function formatTaskTree(tasks: TaskInfo[]) {
+  const refs = new Set(tasks.map((t) => t.ref));
+  const lines: string[] = [];
+  const walk = (parent: string | null, depth: number) => {
+    for (const t of tasks.filter((t) => (t.parent && refs.has(t.parent.ref) ? t.parent.ref : null) === parent)) {
+      lines.push(formatTaskLine(t, "  ".repeat(depth)));
+      walk(t.ref, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return lines.join("\n");
 }
 
 function commentHeader(c: ReviewCommentInfo, assetNames: Map<string, string>) {
@@ -131,7 +147,16 @@ export function formatTask(api: RevApi, t: TaskDetail, assetNames = new Map<stri
     `URL: ${api.webUrl("tasks", t.projectKey, t.number)}`,
   ];
   if (t.sourceReview) lines.push(`From review: ${t.sourceReview.ref} — ${t.sourceReview.title}`);
+  if (t.parent) lines.push(`Sub-task of: ${t.parent.ref} — ${t.parent.title}`);
+  if (t.labels.length) lines.push(`Labels: ${t.labels.join(", ")}`);
+  if (t.status === "proposed") {
+    lines.push("This task is a proposal: a human has to accept it before it can be worked on. Until then only its proposer can edit it.");
+  }
   lines.push("", t.description.trim() || "(no description)");
+  if (t.children.length) {
+    lines.push("", `Sub-tasks (${t.subtasks.done}/${t.subtasks.total} done):`);
+    for (const c of t.children) lines.push(`- ${formatTaskLine(c)}`);
+  }
   if (t.sourceComments.length) {
     lines.push("", `Review feedback to address (${t.sourceComments.length}):`);
     for (const c of t.sourceComments) {

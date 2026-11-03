@@ -214,7 +214,8 @@ describe("Rev end-to-end flow", () => {
     expect(own.status).toBe(200);
     expect((await alice.post("/api/projects/WEB/tasks", { title: "Owner may", assigneeId: bobBotId })).status).toBe(200);
     expect((await bob.patch(`/api/tasks/${own.json.ref}`, { assigneeId: aliceBotId })).status).toBe(403);
-    expect((await aliceBot.post("/api/projects/WEB/tasks", { title: "agent task" })).status).toBe(403);
+    // Agents only propose tasks; a human accepts or rejects them.
+    expect((await aliceBot.post("/api/projects/WEB/tasks", { title: "agent task" })).json.status).toBe("proposed");
   });
 
   it("lets the agent pull its work, deliver a review and finish the task", async () => {

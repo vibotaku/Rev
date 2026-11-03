@@ -71,6 +71,7 @@ export function Projects() {
                   {p.description && <p className="mt-2 line-clamp-2 text-sm text-zinc-500">{p.description}</p>}
                   <div className="mt-3 flex gap-4 text-xs text-zinc-500">
                     <span>{p.counts.openTasks} open task{p.counts.openTasks === 1 ? "" : "s"}</span>
+                    {p.counts.proposedTasks > 0 && <span className="text-sky-700">{p.counts.proposedTasks} proposed</span>}
                     <span>{p.counts.openReviews} open review{p.counts.openReviews === 1 ? "" : "s"}</span>
                     <span>{p.counts.members} member{p.counts.members === 1 ? "" : "s"}</span>
                   </div>

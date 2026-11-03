@@ -1,11 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Argument, Command } from "commander";
-import { TASK_STATUS_LABELS, TASK_STATUSES, type TaskStatus } from "@rev/shared";
-import { RevApi } from "./api";
+import { Argument, Command, Option } from "commander";
+import { ACCEPTED_TASK_STATUSES, TASK_PRIORITIES, TASK_STATUS_LABELS, TASK_STATUSES, type TaskStatus } from "@rev/shared";
+import { RevApi, type TaskProposal } from "./api";
 import { agentConfigFile, configPath, findConfigs, linkClaude, loadConfig, saveConfig, savedCredentials } from "./config";
-import { formatReview, formatTask, formatTaskLine } from "./format";
+import { formatReview, formatTask, formatTaskLine, formatTaskTree } from "./format";
 import { assetNamesFor, createReviewKit, fetchSnapshots, submitReviewRound } from "./kit";
 import { runMcpServer } from "./mcp";
 import {
@@ -38,6 +38,38 @@ const defaultIo: Io = {
 };
 
 const collect = (value: string, prev: string[] = []) => [...prev, value];
+
+const splitLabels = (raw: string) => raw.split(",").map((l) => l.trim()).filter(Boolean);
+
+/** Reads a plan file for `rev task propose --from`: a JSON array of tasks, or {"tasks": [...]}. */
+async function readProposals(file: string, assignee: (who: unknown, where: string) => Promise<string | null>) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(file, "utf8"));
+  } catch (e) {
+    throw new Error(`Cannot read ${file}: ${(e as Error).message}`);
+  }
+  const list = Array.isArray(parsed) ? parsed : (parsed as { tasks?: unknown })?.tasks;
+  if (!Array.isArray(list) || !list.length) throw new Error(`${file} must hold a non-empty JSON array of tasks (or {"tasks": [...]})`);
+  const items: TaskProposal[] = [];
+  for (const [i, raw] of list.entries()) {
+    const t = raw as Record<string, unknown>;
+    const where = `${file} task ${i + 1}${typeof t.key === "string" ? ` (${t.key})` : ""}: `;
+    if (typeof t.title !== "string" || !t.title.trim()) throw new Error(`${where}needs a title`);
+    const description =
+      typeof t.descriptionFile === "string" ? await readFile(path.resolve(path.dirname(file), t.descriptionFile), "utf8") : t.description;
+    items.push({
+      ...(typeof t.key === "string" ? { key: t.key } : {}),
+      title: t.title,
+      ...(typeof description === "string" ? { description } : {}),
+      ...(typeof t.priority === "string" ? { priority: t.priority as TaskProposal["priority"] } : {}),
+      ...(typeof t.parent === "string" ? { parent: t.parent } : {}),
+      ...(Array.isArray(t.labels) ? { labels: t.labels.map(String) } : typeof t.labels === "string" ? { labels: splitLabels(t.labels) } : {}),
+      assigneeId: await assignee(t.assignee, where),
+    });
+  }
+  return items;
+}
 
 async function readStdin() {
   const chunks: Buffer[] = [];
@@ -204,7 +236,12 @@ export function buildProgram(io: Io = defaultIo) {
       const projects = await (await api()).projects();
       emit(cmd, projects, () =>
         projects.length
-          ? projects.map((p) => `${p.key.padEnd(10)} ${p.name} (${p.myRole}, ${p.counts.openTasks} open tasks)`).join("\n")
+          ? projects
+              .map((p) => {
+                const proposed = p.counts.proposedTasks ? `, ${p.counts.proposedTasks} proposed` : "";
+                return `${p.key.padEnd(10)} ${p.name} (${p.myRole}, ${p.counts.openTasks} open tasks${proposed})`;
+              })
+              .join("\n")
           : "No projects yet. Ask your linked human to add this agent to a project.",
       );
     });
@@ -312,14 +349,95 @@ export function buildProgram(io: Io = defaultIo) {
 
   program
     .command("tasks")
-    .description("List tasks assigned to you")
+    .description("List tasks assigned to you, or every task in a project (as a tree of sub-tasks)")
     .option("-a, --all-statuses", "include done and cancelled tasks")
-    .action(async (opts: { allStatuses?: boolean }, cmd: Command) => {
-      const tasks = await (await api()).myTasks(opts.allStatuses ? [...TASK_STATUSES] : undefined);
-      emit(cmd, tasks, () => (tasks.length ? tasks.map(formatTaskLine).join("\n") : "No tasks assigned to you."));
+    .option("-p, --project <key>", "list the project's tasks, whoever they are assigned to, proposals included")
+    .action(async (opts: { allStatuses?: boolean; project?: string }, cmd: Command) => {
+      const client = await api();
+      if (opts.project) {
+        const open = TASK_STATUSES.filter((s) => s !== "done" && s !== "cancelled");
+        const tasks = await client.projectTasks(opts.project, opts.allStatuses ? undefined : open);
+        return emit(cmd, tasks, () => (tasks.length ? formatTaskTree(tasks) : `No ${opts.allStatuses ? "" : "open "}tasks in ${opts.project}.`));
+      }
+      const tasks = await client.myTasks(opts.allStatuses ? [...TASK_STATUSES] : undefined);
+      emit(cmd, tasks, () => (tasks.length ? tasks.map((t) => formatTaskLine(t)).join("\n") : "No tasks assigned to you."));
     });
 
-  const task = program.command("task").description("Work on a single task");
+  const task = program.command("task").description("Work on a single task, or propose new ones");
+
+  task
+    .command("propose")
+    .alias("create")
+    .description(
+      "Propose tasks in a project. They wait as Proposed until a human accepts them (then they are worked on as usual) or rejects them. " +
+        "One task from the options, or many from a JSON file (--from).",
+    )
+    .requiredOption("-p, --project <key>", "project key, e.g. WEB")
+    .option("-t, --title <title>", "title of a single task")
+    .option("-d, --description <md>", "description (markdown)")
+    .option("--description-file <file>", "read the description from a file")
+    .addOption(new Option("--priority <priority>", "priority").choices(TASK_PRIORITIES))
+    .option("--parent <ref>", "make it a sub-task of this task, e.g. WEB-3")
+    .option("--labels <labels>", "comma-separated labels, e.g. week-1,ui")
+    .option("--assign <who>", "me (you plan to do it) or none", "none")
+    .option(
+      "--from <file>",
+      'JSON array of tasks (or {"tasks": [...]}): {key?, title, description?, descriptionFile?, priority?, parent?, labels?, assignee?: "me"}. ' +
+        "parent is a task ref or the key of an earlier item; up to 100 tasks, created all or none",
+    )
+    .action(
+      async (
+        opts: {
+          project: string;
+          title?: string;
+          description?: string;
+          descriptionFile?: string;
+          priority?: TaskProposal["priority"];
+          parent?: string;
+          labels?: string;
+          assign: string;
+          from?: string;
+        },
+        cmd: Command,
+      ) => {
+        if (!!opts.from === !!opts.title) throw new Error("Give either --title (one task) or --from <file> (many).");
+        const client = await api();
+        let myId: string | undefined;
+        const assignee = async (who: unknown, where: string) => {
+          if (who == null || who === "none" || who === "") return null;
+          if (who !== "me") throw new Error(`${where}assignee must be "me" or none: agents propose work only for themselves`);
+          return (myId ??= (await client.me()).user.id);
+        };
+        let items: TaskProposal[];
+        if (opts.from) {
+          items = await readProposals(opts.from, assignee);
+        } else {
+          const description = opts.descriptionFile ? await readFile(opts.descriptionFile, "utf8") : opts.description;
+          items = [
+            {
+              title: opts.title!,
+              ...(description !== undefined ? { description } : {}),
+              ...(opts.priority ? { priority: opts.priority } : {}),
+              ...(opts.parent ? { parent: opts.parent } : {}),
+              ...(opts.labels ? { labels: splitLabels(opts.labels) } : {}),
+              assigneeId: await assignee(opts.assign, ""),
+            },
+          ];
+        }
+        const created = await client.proposeTasks(opts.project, items);
+        const proposed = created.filter((t) => t.status === "proposed").length;
+        emit(cmd, created, () =>
+          [
+            formatTaskTree(created),
+            "",
+            proposed
+              ? `Proposed ${proposed} task${proposed === 1 ? "" : "s"} in ${opts.project.toUpperCase()}. ` +
+                `They wait for a human to accept them: ${client.webUrl("tasks", opts.project.toUpperCase())}`
+              : `Created ${created.length} task${created.length === 1 ? "" : "s"} in ${opts.project.toUpperCase()}.`,
+          ].join("\n"),
+        );
+      },
+    );
 
   task
     .command("show")
@@ -362,7 +480,7 @@ export function buildProgram(io: Io = defaultIo) {
     .command("status")
     .description("Set a task's status")
     .argument("<ref>")
-    .addArgument(new Argument("<status>", "new status").choices(TASK_STATUSES))
+    .addArgument(new Argument("<status>", "new status").choices(ACCEPTED_TASK_STATUSES))
     .action((ref: string, status: TaskStatus, _opts, cmd: Command) => setStatus(cmd, ref, status));
 
   task

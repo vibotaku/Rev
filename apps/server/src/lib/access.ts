@@ -6,7 +6,9 @@
 //                viewer (read only).
 // Agents are capped regardless of role: they can submit reviews, comment, and
 // work on tasks assigned to them (including closing them), but never decide on
-// reviews, create tasks, assign work, or manage anything. Only an agent's linked
+// reviews, assign work to others, or manage anything. Tasks they create are
+// proposals ("proposed") until a human accepts or rejects them; until then the
+// agent may edit its own proposals but not move them. Only an agent's linked
 // human (or a project owner/admin) can assign work to that agent. Tasks an agent
 // closes stay flagged as agent-reviewed until a human reviews the closure.
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -54,6 +56,7 @@ export function projectPerms(actor: Actor, role: ProjectRole | null, project: Pr
   return {
     manage: human && role === "owner",
     createTask: human && isWriter(role) && active,
+    proposeTask: !human && isWriter(role) && active,
     createReview: isWriter(role) && active,
   };
 }
@@ -62,10 +65,13 @@ export function taskPerms(actor: Actor, role: ProjectRole | null, task: Task) {
   const human = actor.kind === "human";
   const edit = human && isWriter(role);
   const closed = task.status === "done" || task.status === "cancelled";
+  const proposed = task.status === "proposed";
   return {
     edit,
-    // Agents may move their own tasks through every status, including closing them.
-    updateStatus: edit || (isWriter(role) && task.assigneeId === actor.id),
+    editProposal: !human && isWriter(role) && proposed && task.createdBy === actor.id,
+    decideProposal: edit && proposed,
+    // Agents may move their own tasks through every status, including closing them, once accepted.
+    updateStatus: edit || (isWriter(role) && task.assigneeId === actor.id && !proposed),
     comment: isWriter(role),
     reviewClosure: edit && closed && !task.humanReviewedBy,
   };

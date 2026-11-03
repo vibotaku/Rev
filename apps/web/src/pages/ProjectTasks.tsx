@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Columns3, List, Plus, Search, UserCheck } from "lucide-react";
+import { Bot, Check, Columns3, Lightbulb, List, ListTree, Plus, Search, UserCheck, X } from "lucide-react";
 import { Link, useOutletContext } from "react-router";
 import {
   TASK_PRIORITIES,
@@ -16,7 +16,23 @@ import {
 import { api } from "../api";
 import { useUser } from "../auth";
 import { TaskRow } from "../components/lists";
-import { Avatar, Button, Card, closureTitle, EmptyState, ErrorBox, Field, Input, Modal, PageLoader, PriorityMark, Select, Textarea } from "../components/ui";
+import {
+  Avatar,
+  Button,
+  Card,
+  closureTitle,
+  EmptyState,
+  ErrorBox,
+  Field,
+  Input,
+  LabelChip,
+  LabelInput,
+  Modal,
+  PageLoader,
+  PriorityMark,
+  Select,
+  Textarea,
+} from "../components/ui";
 import { cx, taskPath } from "../lib";
 import { useMembers } from "./Project";
 
@@ -29,23 +45,52 @@ export function assignableMembers(members: ProjectMemberInfo[], meId: string, my
   );
 }
 
+export function useProjectTasks(key: string | undefined) {
+  return useQuery({
+    queryKey: ["tasks", key],
+    queryFn: () => api.get<TaskInfo[]>(`/api/projects/${key}/tasks`),
+    enabled: !!key,
+    refetchInterval: 30_000,
+  });
+}
+
+/** Labels in use in a project, for filters and suggestions. */
+export function labelsOf(tasks: TaskInfo[] | undefined) {
+  const seen = new Map<string, string>();
+  for (const t of tasks ?? []) for (const l of t.labels) if (!seen.has(l.toLowerCase())) seen.set(l.toLowerCase(), l);
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Accepts (into a status) or rejects (cancelled) proposals, one request each. */
+export function useDecideProposals(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ refs, status }: { refs: string[]; status: TaskStatus }) => {
+      for (const ref of refs) await api.patch(`/api/tasks/${ref}`, { status });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["tasks", key] });
+      qc.invalidateQueries({ queryKey: ["task"] });
+      qc.invalidateQueries({ queryKey: ["project", key] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
 export function ProjectTasks() {
   const project = useOutletContext<ProjectInfo>();
   const me = useUser();
   const qc = useQueryClient();
   const [view, setView] = useState<"board" | "list">(() => (localStorage.getItem("rev.taskView") as "board" | "list") ?? "board");
   const [filter, setFilter] = useState("all");
+  const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [showCancelled, setShowCancelled] = useState(false);
 
   const key = ["tasks", project.key];
-  const { data: tasks, isLoading, error } = useQuery({
-    queryKey: key,
-    queryFn: () => api.get<TaskInfo[]>(`/api/projects/${project.key}/tasks`),
-    refetchInterval: 30_000,
-  });
+  const { data: tasks, isLoading, error } = useProjectTasks(project.key);
   const move = useMutation({
     mutationFn: ({ ref, status, position }: { ref: string; status: TaskStatus; position: number }) =>
       api.patch(`/api/tasks/${ref}`, { status, position }),
@@ -61,7 +106,9 @@ export function ProjectTasks() {
       qc.invalidateQueries({ queryKey: ["project", project.key] });
     },
   });
+  const decide = useDecideProposals(project.key);
 
+  const labels = useMemo(() => labelsOf(tasks), [tasks]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (tasks ?? [])
@@ -70,21 +117,27 @@ export function ProjectTasks() {
         if (filter === "agents" && t.assignee?.kind !== "agent") return false;
         if (filter === "unassigned" && t.assignee) return false;
         if (filter === "agent-closed" && t.closure?.review !== "agent") return false;
-        if (q && !`${t.ref} ${t.title}`.toLowerCase().includes(q)) return false;
+        if (label && !t.labels.some((l) => l.toLowerCase() === label.toLowerCase())) return false;
+        if (q && !`${t.ref} ${t.title} ${t.labels.join(" ")}`.toLowerCase().includes(q)) return false;
         return true;
       })
       .sort((a, b) => a.position - b.position);
-  }, [tasks, filter, query, me.id]);
+  }, [tasks, filter, label, query, me.id]);
 
   function setViewPersist(v: "board" | "list") {
     setView(v);
     localStorage.setItem("rev.taskView", v);
   }
 
+  const canEdit = project.can.createTask;
+  const draggedTask = (tasks ?? []).find((t) => t.id === dragging);
+  // Proposals can be dragged out (which accepts them) but nothing can be dragged back in.
+  const canDropIn = (status: TaskStatus) => canEdit && (status !== "proposed" || draggedTask?.status === "proposed");
+
   function drop(status: TaskStatus, beforeId: string | null) {
-    const ref = (tasks ?? []).find((t) => t.id === dragging)?.ref;
+    const ref = draggedTask?.ref;
     setDragging(null);
-    if (!ref) return;
+    if (!ref || !canDropIn(status)) return;
     const column = filtered.filter((t) => t.status === status && t.id !== dragging);
     const idx = beforeId ? column.findIndex((t) => t.id === beforeId) : column.length;
     const prev = column[idx - 1]?.position;
@@ -93,7 +146,8 @@ export function ProjectTasks() {
     move.mutate({ ref, status, position });
   }
 
-  const canEdit = project.can.createTask;
+  const hasProposals = (tasks ?? []).some((t) => t.status === "proposed");
+  const columns: TaskStatus[] = [...(hasProposals ? (["proposed"] as const) : []), ...BOARD, ...(showCancelled ? (["cancelled"] as const) : [])];
 
   return (
     <div className="flex h-full flex-col">
@@ -109,6 +163,16 @@ export function ProjectTasks() {
           <option value="unassigned">Unassigned</option>
           <option value="agent-closed">Closed by agents, not reviewed</option>
         </Select>
+        {labels.length > 0 && (
+          <Select className="min-w-0 flex-1 sm:w-36 sm:flex-none" value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Label">
+            <option value="">All labels</option>
+            {labels.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="flex items-center gap-1 rounded-md border border-zinc-300 bg-white p-0.5 sm:ml-auto">
           <button
             className={cx("rounded p-1.5", view === "board" ? "bg-zinc-100 text-zinc-900" : "text-zinc-400")}
@@ -131,32 +195,38 @@ export function ProjectTasks() {
           </Button>
         )}
       </div>
-      <ErrorBox error={error ?? move.error} />
+      <ErrorBox error={error ?? move.error ?? decide.error} />
       {isLoading ? (
         <PageLoader />
       ) : !tasks?.length ? (
         <div className="px-4 md:px-8">
           <EmptyState title="No tasks yet">
-            Create tasks here, or turn accepted review comments into tasks from a review.
+            Create tasks here, or turn accepted review comments into tasks from a review. Agents can also propose tasks for you to accept.
           </EmptyState>
         </div>
       ) : view === "board" ? (
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-4 pb-6 max-md:snap-x max-md:scroll-px-4 md:px-8">
-          {[...BOARD, ...(showCancelled ? (["cancelled"] as TaskStatus[]) : [])].map((status) => {
+          {columns.map((status) => {
             const column = filtered.filter((t) => t.status === status);
             const unreviewed = column.filter((t) => t.closure?.review === "agent").length;
+            const proposals = status === "proposed";
             return (
               <div
                 key={status}
+                data-column={status}
                 className={cx(
-                  "flex w-72 max-w-[calc(100vw-3rem)] shrink-0 flex-col rounded-lg bg-zinc-100/80 max-md:snap-start",
-                  dragging && "ring-1 ring-zinc-200",
+                  "flex w-72 max-w-[calc(100vw-3rem)] shrink-0 flex-col rounded-lg max-md:snap-start",
+                  proposals ? "border border-dashed border-sky-300 bg-sky-50/70" : "bg-zinc-100/80",
+                  dragging && canDropIn(status) && "ring-1 ring-zinc-200",
                 )}
-                onDragOver={(e) => canEdit && e.preventDefault()}
+                onDragOver={(e) => canDropIn(status) && e.preventDefault()}
                 onDrop={() => drop(status, null)}
               >
-                <div className="flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-600">
-                  <span>{TASK_STATUS_LABELS[status]}</span>
+                <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs font-semibold text-zinc-600">
+                  <span className={cx("flex items-center gap-1", proposals && "text-sky-800")} title={proposals ? "Tasks agents proposed. Accept them to add them to the board." : undefined}>
+                    {proposals && <Lightbulb className="size-3.5" />}
+                    {TASK_STATUS_LABELS[status]}
+                  </span>
                   <span className="flex items-center gap-1.5">
                     {unreviewed > 0 && (
                       <span
@@ -165,6 +235,19 @@ export function ProjectTasks() {
                       >
                         <Bot className="size-3" /> {unreviewed} to review
                       </span>
+                    )}
+                    {proposals && canEdit && column.length > 1 && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-1.5 text-[11px] text-sky-800 hover:bg-sky-100"
+                        loading={decide.isPending && decide.variables?.refs.length === column.length}
+                        disabled={decide.isPending}
+                        onClick={() => decide.mutate({ refs: column.map((t) => t.ref), status: "todo" })}
+                        title="Accept every proposal shown here into To do"
+                      >
+                        <Check className="size-3" /> Accept all
+                      </Button>
                     )}
                     <span className="text-zinc-400">{column.length}</span>
                   </span>
@@ -176,41 +259,19 @@ export function ProjectTasks() {
                       draggable={canEdit}
                       onDragStart={() => setDragging(t.id)}
                       onDragEnd={() => setDragging(null)}
-                      onDragOver={(e) => canEdit && e.preventDefault()}
+                      onDragOver={(e) => canDropIn(status) && e.preventDefault()}
                       onDrop={(e) => {
                         e.stopPropagation();
                         drop(status, t.id);
                       }}
                       className={cx(dragging === t.id && "opacity-40")}
                     >
-                      <Link
-                        to={taskPath(t.ref)}
-                        title={closureTitle(t.closure)}
-                        className={cx(
-                          "block rounded-md border p-2.5 shadow-sm",
-                          t.closure?.review === "agent"
-                            ? "border-dashed border-violet-400 bg-violet-50/60 hover:border-violet-500"
-                            : "border-zinc-200 bg-white hover:border-zinc-300",
-                        )}
-                      >
-                        <div className="flex items-center gap-2 text-xs text-zinc-500">
-                          <span className="font-mono">{t.ref}</span>
-                          <PriorityMark priority={t.priority} />
-                          {t.sourceReview && <span className="truncate">· {t.sourceReview.ref}</span>}
-                          <span className="ml-auto">{t.assignee && <Avatar user={t.assignee} size="sm" />}</span>
-                        </div>
-                        <div className="mt-1 text-sm leading-snug">{t.title}</div>
-                        {t.closure?.review === "agent" && (
-                          <div className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-violet-700">
-                            <Bot className="size-3" /> Closed by {t.closure.by.name} · not reviewed
-                          </div>
-                        )}
-                        {t.closure?.review === "human" && (
-                          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-emerald-700">
-                            <UserCheck className="size-3" /> {t.closure.reviewedBy?.name ?? t.closure.by.name}
-                          </div>
-                        )}
-                      </Link>
+                      <TaskCard
+                        task={t}
+                        canDecide={canEdit}
+                        deciding={decide.isPending && !!decide.variables?.refs.includes(t.ref)}
+                        onDecide={(to) => decide.mutate({ refs: [t.ref], status: to })}
+                      />
                     </div>
                   ))}
                 </div>
@@ -235,28 +296,119 @@ export function ProjectTasks() {
   );
 }
 
-function CreateTask({ project, onClose }: { project: ProjectInfo; onClose: () => void }) {
+function TaskCard({
+  task: t,
+  canDecide,
+  deciding,
+  onDecide,
+}: {
+  task: TaskInfo;
+  canDecide: boolean;
+  deciding: boolean;
+  onDecide: (status: TaskStatus) => void;
+}) {
+  const proposed = t.status === "proposed";
+  return (
+    <div
+      data-task={t.ref}
+      className={cx(
+        "rounded-md border shadow-sm",
+        proposed
+          ? "border-dashed border-sky-400 bg-white hover:border-sky-500"
+          : t.closure?.review === "agent"
+            ? "border-dashed border-violet-400 bg-violet-50/60 hover:border-violet-500"
+            : "border-zinc-200 bg-white hover:border-zinc-300",
+      )}
+    >
+      <Link to={taskPath(t.ref)} title={closureTitle(t.closure)} className="block p-2.5">
+        <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <span className="font-mono">{t.ref}</span>
+          <PriorityMark priority={t.priority} />
+          {t.sourceReview && <span className="truncate">· {t.sourceReview.ref}</span>}
+          {t.parent && (
+            <span className="truncate" title={`Sub-task of ${t.parent.ref} ${t.parent.title}`}>
+              ↳ {t.parent.ref}
+            </span>
+          )}
+          <span className="ml-auto">{t.assignee && <Avatar user={t.assignee} size="sm" />}</span>
+        </div>
+        <div className="mt-1 text-sm leading-snug">{t.title}</div>
+        {(t.labels.length > 0 || t.subtasks.total > 0) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {t.labels.map((l) => (
+              <LabelChip key={l} label={l} />
+            ))}
+            {t.subtasks.total > 0 && (
+              <span className="ml-auto flex items-center gap-1 text-[11px] text-zinc-500" title={`${t.subtasks.done} of ${t.subtasks.total} sub-tasks done`}>
+                <ListTree className="size-3" /> {t.subtasks.done}/{t.subtasks.total}
+              </span>
+            )}
+          </div>
+        )}
+        {proposed && (
+          <div className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-sky-700">
+            <Lightbulb className="size-3" /> Proposed by {t.createdBy.name}
+          </div>
+        )}
+        {t.closure?.review === "agent" && (
+          <div className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-violet-700">
+            <Bot className="size-3" /> Closed by {t.closure.by.name} · not reviewed
+          </div>
+        )}
+        {t.closure?.review === "human" && (
+          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-emerald-700">
+            <UserCheck className="size-3" /> {t.closure.reviewedBy?.name ?? t.closure.by.name}
+          </div>
+        )}
+      </Link>
+      {proposed && canDecide && (
+        <div className="flex gap-1 border-t border-dashed border-sky-200 p-1">
+          <Button size="sm" variant="ghost" className="flex-1 text-emerald-700 hover:bg-emerald-50" disabled={deciding} onClick={() => onDecide("todo")}>
+            <Check className="size-3.5" /> Accept
+          </Button>
+          <Button size="sm" variant="ghost" className="flex-1 text-zinc-500" disabled={deciding} onClick={() => onDecide("cancelled")}>
+            <X className="size-3.5" /> Reject
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function CreateTask({ project, parentRef, onClose }: { project: ProjectInfo; parentRef?: string; onClose: () => void }) {
   const me = useUser();
   const qc = useQueryClient();
   const { data: members } = useMembers(project.key);
+  const { data: tasks } = useProjectTasks(project.key);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("none");
   const [assigneeId, setAssigneeId] = useState("");
+  const [parent, setParent] = useState(parentRef ?? "");
+  const [labels, setLabels] = useState<string[]>([]);
   const create = useMutation({
     mutationFn: () =>
-      api.post<TaskDetail>(`/api/projects/${project.key}/tasks`, { title, description, priority, assigneeId: assigneeId || null }),
+      api.post<TaskDetail>(`/api/projects/${project.key}/tasks`, {
+        title,
+        description,
+        priority,
+        assigneeId: assigneeId || null,
+        parent: parent || null,
+        labels,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tasks", project.key] });
       qc.invalidateQueries({ queryKey: ["project", project.key] });
+      if (parent) qc.invalidateQueries({ queryKey: ["task", parent] });
       onClose();
     },
   });
   const options = assignableMembers(members ?? [], me.id, project.myRole);
+  const parents = (tasks ?? []).filter((t) => t.status !== "cancelled").sort((a, b) => a.number - b.number);
 
   return (
     <Modal
-      title={`New task in ${project.key}`}
+      title={parentRef ? `New sub-task of ${parentRef}` : `New task in ${project.key}`}
       wide
       onClose={onClose}
       footer={
@@ -274,7 +426,7 @@ function CreateTask({ project, onClose }: { project: ProjectInfo; onClose: () =>
       <Field label="Description" hint="Markdown supported.">
         <Textarea rows={6} value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Assignee">
           <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
             <option value="">Unassigned</option>
@@ -294,6 +446,19 @@ function CreateTask({ project, onClose }: { project: ProjectInfo; onClose: () =>
               </option>
             ))}
           </Select>
+        </Field>
+        <Field label="Parent task">
+          <Select value={parent} onChange={(e) => setParent(e.target.value)}>
+            <option value="">None (top-level task)</option>
+            {parents.map((t) => (
+              <option key={t.id} value={t.ref}>
+                {t.ref} {t.title.length > 60 ? `${t.title.slice(0, 60)}…` : t.title}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Labels">
+          <LabelInput value={labels} onChange={setLabels} suggestions={labelsOf(tasks)} />
         </Field>
       </div>
       <ErrorBox error={create.error} />

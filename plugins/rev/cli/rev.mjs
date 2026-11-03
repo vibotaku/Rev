@@ -30349,8 +30349,10 @@ function date4(params) {
 // ../../packages/shared/src/index.ts
 var GLOBAL_ROLES = ["admin", "member"];
 var PROJECT_ROLES = ["owner", "member", "viewer"];
-var TASK_STATUSES = ["todo", "in_progress", "in_review", "done", "cancelled"];
+var TASK_STATUSES = ["proposed", "todo", "in_progress", "in_review", "done", "cancelled"];
+var ACCEPTED_TASK_STATUSES = ["todo", "in_progress", "in_review", "done", "cancelled"];
 var TASK_STATUS_LABELS = {
+  proposed: "Proposed",
   todo: "To do",
   in_progress: "In progress",
   in_review: "In review",
@@ -30493,12 +30495,20 @@ var projectUpdateBody = external_exports.object({
 });
 var memberAddBody = external_exports.object({ userId: external_exports.uuid(), role: external_exports.enum(PROJECT_ROLES).default("member") });
 var memberUpdateBody = external_exports.object({ role: external_exports.enum(PROJECT_ROLES) });
+var taskLabels = external_exports.array(external_exports.string().trim().min(1).max(40).regex(/^[^,\n]+$/, "Labels cannot contain commas or line breaks")).max(10).transform((ls) => ls.filter((l, i) => ls.findIndex((o) => o.toLowerCase() === l.toLowerCase()) === i));
 var taskCreateBody = external_exports.object({
   title: external_exports.string().trim().min(1).max(300),
   description: markdown.default(""),
-  status: external_exports.enum(TASK_STATUSES).default("todo"),
+  /** Default: "todo" for humans, "proposed" for agents (the only status agents may create). */
+  status: external_exports.enum(TASK_STATUSES).optional(),
   priority: external_exports.enum(TASK_PRIORITIES).default("none"),
-  assigneeId: external_exports.uuid().nullable().default(null)
+  assigneeId: external_exports.uuid().nullable().default(null),
+  /** Parent task in the same project, e.g. "WEB-3". In a bulk create, also the `key` of an earlier item. */
+  parent: external_exports.string().trim().min(1).max(60).nullable().default(null),
+  labels: taskLabels.default([])
+});
+var taskBulkCreateBody = external_exports.object({
+  tasks: external_exports.array(taskCreateBody.extend({ key: external_exports.string().trim().min(1).max(60).optional() })).min(1).max(100)
 });
 var taskUpdateBody = external_exports.object({
   title: external_exports.string().trim().min(1).max(300).optional(),
@@ -30506,7 +30516,10 @@ var taskUpdateBody = external_exports.object({
   status: external_exports.enum(TASK_STATUSES).optional(),
   priority: external_exports.enum(TASK_PRIORITIES).optional(),
   assigneeId: external_exports.uuid().nullable().optional(),
-  position: external_exports.number().finite().optional()
+  position: external_exports.number().finite().optional(),
+  /** Parent task ref in the same project, or null to make it a top-level task. */
+  parent: external_exports.string().trim().min(1).max(40).nullable().optional(),
+  labels: taskLabels.optional()
 });
 var taskCommentBody = external_exports.object({ body: external_exports.string().trim().min(1).max(2e4) });
 var reviewCreateBody = external_exports.object({
@@ -30625,7 +30638,7 @@ var RevApi = class _RevApi {
     return /^https?:\/\//.test(pathOrUrl) ? pathOrUrl : `${this.baseUrl}${pathOrUrl}`;
   }
   webUrl(kind, projectKey2, number4) {
-    return `${this.baseUrl}/p/${projectKey2}/${kind}/${number4}`;
+    return `${this.baseUrl}/p/${projectKey2}/${kind}${number4 === void 0 ? "" : `/${number4}`}`;
   }
   async send(method, pathname, body, headers = {}, signal) {
     let res;
@@ -30710,6 +30723,15 @@ var RevApi = class _RevApi {
   myTasks(statuses) {
     const q = statuses?.length ? `?status=${statuses.join(",")}` : "";
     return this.request("GET", `/api/tasks${q}`);
+  }
+  /** Every task in a project, any assignee. */
+  projectTasks(projectKey2, statuses) {
+    const q = statuses?.length ? `?status=${statuses.join(",")}` : "";
+    return this.request("GET", `/api/projects/${encodeURIComponent(projectKey2)}/tasks${q}`);
+  }
+  /** Proposes tasks (all or none). Agents' tasks wait as "proposed" until a human accepts them. */
+  proposeTasks(projectKey2, tasks) {
+    return this.request("POST", `/api/projects/${encodeURIComponent(projectKey2)}/tasks/bulk`, { tasks });
   }
   task(ref) {
     return this.request("GET", `/api/tasks/${encodeURIComponent(ref)}`);
@@ -30884,9 +30906,23 @@ function statusLabel(t) {
   if (t.closure.review === "agent") return `${label} (agent-closed, not reviewed)`;
   return t.closure.by.id === t.closure.reviewedBy?.id ? label : `${label} (reviewed by ${t.closure.reviewedBy?.name})`;
 }
-function formatTaskLine(t) {
+function formatTaskLine(t, indent = "") {
   const prio = t.priority !== "none" ? ` [${t.priority}]` : "";
-  return `${t.ref.padEnd(10)} ${statusLabel(t).padEnd(12)}${prio} ${t.title}`;
+  const labels = t.labels.length ? `  ${t.labels.map((l) => `#${l}`).join(" ")}` : "";
+  const sub = t.subtasks.total ? `  (${t.subtasks.done}/${t.subtasks.total} sub-tasks done)` : "";
+  return `${(indent + t.ref).padEnd(10)} ${statusLabel(t).padEnd(12)}${prio} ${t.title}${labels}${sub}`;
+}
+function formatTaskTree(tasks) {
+  const refs = new Set(tasks.map((t) => t.ref));
+  const lines = [];
+  const walk = (parent, depth) => {
+    for (const t of tasks.filter((t2) => (t2.parent && refs.has(t2.parent.ref) ? t2.parent.ref : null) === parent)) {
+      lines.push(formatTaskLine(t, "  ".repeat(depth)));
+      walk(t.ref, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return lines.join("\n");
 }
 function commentHeader(c, assetNames) {
   return [
@@ -30937,7 +30973,16 @@ function formatTask(api, t, assetNames = /* @__PURE__ */ new Map()) {
     `URL: ${api.webUrl("tasks", t.projectKey, t.number)}`
   ];
   if (t.sourceReview) lines.push(`From review: ${t.sourceReview.ref} \u2014 ${t.sourceReview.title}`);
+  if (t.parent) lines.push(`Sub-task of: ${t.parent.ref} \u2014 ${t.parent.title}`);
+  if (t.labels.length) lines.push(`Labels: ${t.labels.join(", ")}`);
+  if (t.status === "proposed") {
+    lines.push("This task is a proposal: a human has to accept it before it can be worked on. Until then only its proposer can edit it.");
+  }
   lines.push("", t.description.trim() || "(no description)");
+  if (t.children.length) {
+    lines.push("", `Sub-tasks (${t.subtasks.done}/${t.subtasks.total} done):`);
+    for (const c of t.children) lines.push(`- ${formatTaskLine(c)}`);
+  }
   if (t.sourceComments.length) {
     lines.push("", `Review feedback to address (${t.sourceComments.length}):`);
     for (const c of t.sourceComments) {
@@ -40765,7 +40810,7 @@ var StdioServerTransport = class {
 };
 
 // src/version.ts
-var VERSION = "0.1.0";
+var VERSION = "0.2.0";
 
 // src/mcp.ts
 var INSTRUCTIONS = `Rev is the team's task and review tracker. You act as an agent account linked to a human owner.
@@ -40785,9 +40830,12 @@ Workflow:
 4. Humans annotate and comment on each round. The review owner accepts or rejects every comment and every mark note
    separately; only accepted ones become tasks for you. Use get_review to read feedback and reply_to_review_comment to
    answer questions (you can reply to a mark note too).
+5. To plan work (e.g. break a design doc into tasks), call propose_tasks: tasks with sub-tasks (parent) and labels.
+   They wait as "proposed" until a human accepts them; you can't start or deliver a proposal, only edit it in Rev.
+   list_project_tasks shows a project's tasks as a tree, proposals included.
 
-Rules: you cannot approve reviews, accept or reject comments, create tasks or assign work; those decisions belong to
-the humans. You may close your own tasks ("done"/"cancelled") when nothing needs a human to look at it; such closures are
+Rules: you cannot approve reviews, accept or reject comments, accept proposals, or assign work to anyone but yourself;
+those decisions belong to the humans. You may close your own tasks ("done"/"cancelled") when nothing needs a human to look at it; such closures are
 shown to humans as agent-closed until one of them reviews it, so leave a note saying what you did and how you verified it.
 Prefer a review kit when there is something visual to check. Keep review titles short and descriptions concrete.`;
 var text = (s) => ({ content: [{ type: "text", text: s }] });
@@ -40819,7 +40867,10 @@ function createMcpServer(client) {
       const projects = await api.projects();
       if (!projects.length) return text("Not a member of any project yet. Ask your linked human to add you.");
       return text(
-        projects.map((p) => `${p.key.padEnd(10)} ${p.name} (role: ${p.myRole}, open tasks: ${p.counts.openTasks})`).join("\n")
+        projects.map((p) => {
+          const proposed = p.counts.proposedTasks ? `, proposed: ${p.counts.proposedTasks}` : "";
+          return `${p.key.padEnd(10)} ${p.name} (role: ${p.myRole}, open tasks: ${p.counts.openTasks}${proposed})`;
+        }).join("\n")
       );
     })
   );
@@ -40834,7 +40885,58 @@ function createMcpServer(client) {
       const api = await getApi();
       const tasks = await api.myTasks(include_closed ? [...TASK_STATUSES] : void 0);
       if (!tasks.length) return text("No tasks assigned to you.");
-      return text(tasks.map(formatTaskLine).join("\n"));
+      return text(tasks.map((t) => formatTaskLine(t)).join("\n"));
+    })
+  );
+  server.registerTool(
+    "list_project_tasks",
+    {
+      description: "List every task in a project, whoever it is assigned to, as a tree of sub-tasks. Includes proposed tasks; use it to find parent refs before propose_tasks.",
+      inputSchema: {
+        project: external_exports.string().describe('Project key such as "WEB"'),
+        include_closed: external_exports.boolean().optional().describe("Also include done and cancelled tasks")
+      },
+      annotations: readOnly
+    },
+    ({ project, include_closed }) => guard(async () => {
+      const api = await getApi();
+      const open2 = TASK_STATUSES.filter((s) => s !== "done" && s !== "cancelled");
+      const tasks = await api.projectTasks(project, include_closed ? void 0 : open2);
+      return text(tasks.length ? formatTaskTree(tasks) : `No ${include_closed ? "" : "open "}tasks in ${project}.`);
+    })
+  );
+  server.registerTool(
+    "propose_tasks",
+    {
+      description: 'Propose one or more tasks (up to 100, created all or none) in a project you are a member of. They wait as "proposed" until a human accepts them (then they are normal tasks: start, deliver with a review, \u2026) or rejects them. Give items a key so later items can name it as their parent; parents must come before their sub-tasks.',
+      inputSchema: {
+        project: external_exports.string().describe('Project key such as "WEB"'),
+        tasks: external_exports.array(
+          external_exports.object({
+            key: external_exports.string().optional().describe("Local name for this item, so later items can use it as parent"),
+            title: external_exports.string().min(1),
+            description: external_exports.string().optional().describe("Markdown: goal, scope, acceptance criteria"),
+            priority: external_exports.enum(TASK_PRIORITIES).optional(),
+            parent: external_exports.string().optional().describe('An existing task ref ("WEB-3") or the key of an earlier item'),
+            labels: external_exports.array(external_exports.string()).max(10).optional(),
+            assign_to_me: external_exports.boolean().optional().describe("Assign it to you (you plan to do it); otherwise unassigned")
+          })
+        ).min(1).max(100)
+      }
+    },
+    ({ project, tasks }) => guard(async () => {
+      const api = await getApi();
+      const me = tasks.some((t) => t.assign_to_me) ? (await api.me()).user.id : null;
+      const created = await api.proposeTasks(
+        project,
+        tasks.map(({ assign_to_me, ...t }) => ({ ...t, assigneeId: assign_to_me ? me : null }))
+      );
+      const proposed = created.filter((t) => t.status === "proposed").length;
+      return text(
+        `${formatTaskTree(created)}
+
+` + (proposed ? `Proposed ${proposed} task${proposed === 1 ? "" : "s"}. They wait for a human to accept them: ${api.webUrl("tasks", project.toUpperCase())}` : `Created ${created.length} task${created.length === 1 ? "" : "s"}.`)
+      );
     })
   );
   server.registerTool(
@@ -40867,7 +40969,7 @@ function createMcpServer(client) {
       description: 'Move one of your tasks to a new status: "in_progress" when starting; "done"/"cancelled" to close it yourself (flagged as agent-closed until a human reviews it). Submitting a review with task_ref moves it to "in_review" instead. Optionally leave a note.',
       inputSchema: {
         ref: external_exports.string().describe('Task reference such as "WEB-12"'),
-        status: external_exports.enum(TASK_STATUSES),
+        status: external_exports.enum(ACCEPTED_TASK_STATUSES),
         note: external_exports.string().optional().describe("Optional progress note posted on the task")
       }
     },
@@ -41536,6 +41638,34 @@ var defaultIo = {
   env: process.env
 };
 var collect = (value, prev = []) => [...prev, value];
+var splitLabels = (raw) => raw.split(",").map((l) => l.trim()).filter(Boolean);
+async function readProposals(file2, assignee) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile3(file2, "utf8"));
+  } catch (e) {
+    throw new Error(`Cannot read ${file2}: ${e.message}`);
+  }
+  const list = Array.isArray(parsed) ? parsed : parsed?.tasks;
+  if (!Array.isArray(list) || !list.length) throw new Error(`${file2} must hold a non-empty JSON array of tasks (or {"tasks": [...]})`);
+  const items = [];
+  for (const [i, raw] of list.entries()) {
+    const t = raw;
+    const where = `${file2} task ${i + 1}${typeof t.key === "string" ? ` (${t.key})` : ""}: `;
+    if (typeof t.title !== "string" || !t.title.trim()) throw new Error(`${where}needs a title`);
+    const description = typeof t.descriptionFile === "string" ? await readFile3(path7.resolve(path7.dirname(file2), t.descriptionFile), "utf8") : t.description;
+    items.push({
+      ...typeof t.key === "string" ? { key: t.key } : {},
+      title: t.title,
+      ...typeof description === "string" ? { description } : {},
+      ...typeof t.priority === "string" ? { priority: t.priority } : {},
+      ...typeof t.parent === "string" ? { parent: t.parent } : {},
+      ...Array.isArray(t.labels) ? { labels: t.labels.map(String) } : typeof t.labels === "string" ? { labels: splitLabels(t.labels) } : {},
+      assigneeId: await assignee(t.assignee, where)
+    });
+  }
+  return items;
+}
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -41658,7 +41788,10 @@ config: ${configPath(env)}`);
     emit(
       cmd,
       projects,
-      () => projects.length ? projects.map((p) => `${p.key.padEnd(10)} ${p.name} (${p.myRole}, ${p.counts.openTasks} open tasks)`).join("\n") : "No projects yet. Ask your linked human to add this agent to a project."
+      () => projects.length ? projects.map((p) => {
+        const proposed = p.counts.proposedTasks ? `, ${p.counts.proposedTasks} proposed` : "";
+        return `${p.key.padEnd(10)} ${p.name} (${p.myRole}, ${p.counts.openTasks} open tasks${proposed})`;
+      }).join("\n") : "No projects yet. Ask your linked human to add this agent to a project."
     );
   });
   const review = program2.command("review").description("Create review kits, submit new rounds, read feedback");
@@ -41717,11 +41850,61 @@ ${url2}`
     const c = await (await api()).commentOnReview(opts.review, { body: text2, parentId: commentId });
     emit(cmd, c, () => `Replied on ${c.reviewRef} (${c.id})`);
   });
-  program2.command("tasks").description("List tasks assigned to you").option("-a, --all-statuses", "include done and cancelled tasks").action(async (opts, cmd) => {
-    const tasks = await (await api()).myTasks(opts.allStatuses ? [...TASK_STATUSES] : void 0);
-    emit(cmd, tasks, () => tasks.length ? tasks.map(formatTaskLine).join("\n") : "No tasks assigned to you.");
+  program2.command("tasks").description("List tasks assigned to you, or every task in a project (as a tree of sub-tasks)").option("-a, --all-statuses", "include done and cancelled tasks").option("-p, --project <key>", "list the project's tasks, whoever they are assigned to, proposals included").action(async (opts, cmd) => {
+    const client = await api();
+    if (opts.project) {
+      const open2 = TASK_STATUSES.filter((s) => s !== "done" && s !== "cancelled");
+      const tasks2 = await client.projectTasks(opts.project, opts.allStatuses ? void 0 : open2);
+      return emit(cmd, tasks2, () => tasks2.length ? formatTaskTree(tasks2) : `No ${opts.allStatuses ? "" : "open "}tasks in ${opts.project}.`);
+    }
+    const tasks = await client.myTasks(opts.allStatuses ? [...TASK_STATUSES] : void 0);
+    emit(cmd, tasks, () => tasks.length ? tasks.map((t) => formatTaskLine(t)).join("\n") : "No tasks assigned to you.");
   });
-  const task = program2.command("task").description("Work on a single task");
+  const task = program2.command("task").description("Work on a single task, or propose new ones");
+  task.command("propose").alias("create").description(
+    "Propose tasks in a project. They wait as Proposed until a human accepts them (then they are worked on as usual) or rejects them. One task from the options, or many from a JSON file (--from)."
+  ).requiredOption("-p, --project <key>", "project key, e.g. WEB").option("-t, --title <title>", "title of a single task").option("-d, --description <md>", "description (markdown)").option("--description-file <file>", "read the description from a file").addOption(new Option("--priority <priority>", "priority").choices(TASK_PRIORITIES)).option("--parent <ref>", "make it a sub-task of this task, e.g. WEB-3").option("--labels <labels>", "comma-separated labels, e.g. week-1,ui").option("--assign <who>", "me (you plan to do it) or none", "none").option(
+    "--from <file>",
+    'JSON array of tasks (or {"tasks": [...]}): {key?, title, description?, descriptionFile?, priority?, parent?, labels?, assignee?: "me"}. parent is a task ref or the key of an earlier item; up to 100 tasks, created all or none'
+  ).action(
+    async (opts, cmd) => {
+      if (!!opts.from === !!opts.title) throw new Error("Give either --title (one task) or --from <file> (many).");
+      const client = await api();
+      let myId;
+      const assignee = async (who2, where) => {
+        if (who2 == null || who2 === "none" || who2 === "") return null;
+        if (who2 !== "me") throw new Error(`${where}assignee must be "me" or none: agents propose work only for themselves`);
+        return myId ??= (await client.me()).user.id;
+      };
+      let items;
+      if (opts.from) {
+        items = await readProposals(opts.from, assignee);
+      } else {
+        const description = opts.descriptionFile ? await readFile3(opts.descriptionFile, "utf8") : opts.description;
+        items = [
+          {
+            title: opts.title,
+            ...description !== void 0 ? { description } : {},
+            ...opts.priority ? { priority: opts.priority } : {},
+            ...opts.parent ? { parent: opts.parent } : {},
+            ...opts.labels ? { labels: splitLabels(opts.labels) } : {},
+            assigneeId: await assignee(opts.assign, "")
+          }
+        ];
+      }
+      const created = await client.proposeTasks(opts.project, items);
+      const proposed = created.filter((t) => t.status === "proposed").length;
+      emit(
+        cmd,
+        created,
+        () => [
+          formatTaskTree(created),
+          "",
+          proposed ? `Proposed ${proposed} task${proposed === 1 ? "" : "s"} in ${opts.project.toUpperCase()}. They wait for a human to accept them: ${client.webUrl("tasks", opts.project.toUpperCase())}` : `Created ${created.length} task${created.length === 1 ? "" : "s"} in ${opts.project.toUpperCase()}.`
+        ].join("\n")
+      );
+    }
+  );
   task.command("show").description("Show a task with the review feedback it came from").argument("<ref>", "task reference, e.g. WEB-12").option("--save-snapshots <dir>", "download annotated snapshots (and frames around video comments) into this directory").action(async (ref, opts, cmd) => {
     const client = await api();
     const t = await client.task(ref);
@@ -41749,7 +41932,7 @@ ${url2}`
     emit(cmd, t, () => `${t.ref} \u2192 ${t.status}${t.closure?.review === "agent" ? " (agent-closed until a human reviews it)" : ""}`);
   }
   task.command("start").description("Mark a task as in progress").argument("<ref>").action((ref, _opts, cmd) => setStatus(cmd, ref, "in_progress"));
-  task.command("status").description("Set a task's status").argument("<ref>").addArgument(new Argument("<status>", "new status").choices(TASK_STATUSES)).action((ref, status, _opts, cmd) => setStatus(cmd, ref, status));
+  task.command("status").description("Set a task's status").argument("<ref>").addArgument(new Argument("<status>", "new status").choices(ACCEPTED_TASK_STATUSES)).action((ref, status, _opts, cmd) => setStatus(cmd, ref, status));
   task.command("ready").description("Hand a task back for human review without a review kit (moves it to in_review)").argument("<ref>").option("-n, --note <text>", "note for the reviewer, posted on the task").action((ref, opts, cmd) => setStatus(cmd, ref, "in_review", opts.note));
   task.command("done").description("Close a task yourself. It is shown as agent-closed until a human reviews it").argument("<ref>").option("-n, --note <text>", "what was done and how it was verified, posted on the task").action((ref, opts, cmd) => setStatus(cmd, ref, "done", opts.note));
   task.command("comment").description("Post a comment on a task").argument("<ref>").argument("<text>", "comment text (markdown)").action(async (ref, text2, _opts, cmd) => {

@@ -100,8 +100,9 @@ export function workingInstructions(origin: string) {
     '   - New work: `rev review create -p WEB -t "Short title" -d "What changed and how to verify" --task WEB-12 --caption-each clip.mp4 after.png`.',
     '4. Read feedback with `rev review show WEB-R3` and answer a comment with `rev review reply <comment id> "…"`.',
     '5. Close a task yourself only when the work is small and objectively verified: `rev task done WEB-12 --note "what you did and how you verified it"`. It shows as agent-closed until a human reviews it.',
+    '6. To plan work, propose tasks: `rev task propose -p WEB --from plan.json` (a JSON array of {key, title, description, priority, parent, labels, assignee: "me"}; parent is an earlier key or a ref like WEB-3) or `rev task propose -p WEB -t "…"`. They wait as Proposed until a human accepts them; `rev tasks -p WEB` shows the project as a tree.',
     "",
-    "Humans approve reviews, accept or reject comments, and create and assign tasks; you can't. Never print or store Rev tokens or enrollment keys.",
+    "Humans approve reviews, accept or reject comments, accept your proposals and assign work; you can't. Never print or store Rev tokens or enrollment keys.",
   ].join("\n");
 }
 

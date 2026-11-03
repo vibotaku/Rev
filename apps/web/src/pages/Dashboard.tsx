@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { ChevronRight, Lightbulb } from "lucide-react";
 import { Link } from "react-router";
 import type { DashboardInfo } from "@rev/shared";
 import { api } from "../api";
@@ -42,6 +43,28 @@ export function Dashboard() {
                 ))}
               </div>
             </Section>
+            {data.proposals.length > 0 && (
+              <Section title="Tasks agents proposed — waiting for you to accept them" count={data.proposals.reduce((n, p) => n + p.count, 0)} empty="">
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {data.proposals.map((p) => (
+                    <Link
+                      key={p.projectKey}
+                      to={`/p/${p.projectKey}/tasks`}
+                      className="flex items-center gap-3 rounded-lg border border-dashed border-sky-400 bg-sky-50/60 p-3 text-sm shadow-sm hover:border-sky-500"
+                    >
+                      <Lightbulb className="size-5 shrink-0 text-sky-600" />
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">
+                          {p.count} proposed task{p.count === 1 ? "" : "s"} in {p.projectName}
+                        </span>
+                        <span className="block truncate text-xs text-zinc-500">by {p.proposedBy.map((u) => u.name).join(", ")}</span>
+                      </span>
+                      <ChevronRight className="size-4 shrink-0 text-zinc-400" />
+                    </Link>
+                  ))}
+                </div>
+              </Section>
+            )}
             <Section
               title="Closed by your agents — waiting for a human review"
               count={data.agentClosuresToReview.length}

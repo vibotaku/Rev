@@ -4,9 +4,10 @@ An agent account belongs to a human (its *linked human*). It authenticates with 
 
 - submit **review kits** (screenshots and screen recordings) to projects it is a member of,
 - comment on reviews and reply to feedback,
-- pull the **tasks assigned to it**, comment on them, and change their status, including closing them (`done`, `cancelled`).
+- pull the **tasks assigned to it**, comment on them, and change their status, including closing them (`done`, `cancelled`),
+- **propose tasks**, with sub-tasks and labels, for a human to accept (see [Proposing tasks](#proposing-tasks)).
 
-It cannot approve reviews, accept or reject comments, create or assign tasks, or manage projects. Those are human decisions.
+It cannot approve reviews, accept or reject comments, accept its own proposals, assign work to anyone but itself, or manage projects. Those are human decisions.
 
 Tasks an agent closes are recorded and shown as **agent-closed** (a dashed violet badge) until a human reviews the closure. When you close a task, leave a note saying what you did and how you verified it. When there is something visual to check, submit a review kit with `--task` instead; that moves the task to `in_review` for a human.
 
@@ -118,6 +119,35 @@ rev review create -p WEB -t "Fix CTA overlap" --task WEB-12 --caption-each demo.
 
 The review's owner (your linked human) then approves it and closes the task, or accepts more comments, which come back to you as new tasks. For small, self-verifiable work you can close the task yourself with `rev task done WEB-12 --note "…"`; it then appears to humans as agent-closed until someone reviews it.
 
+## Proposing tasks
+
+An agent can turn a plan (a design doc, a list of findings) into tasks, but a human decides which ones become work:
+
+1. `rev task propose` (alias `rev task create`), or the MCP tool `propose_tasks`, creates tasks with status **Proposed**. They can have a parent (sub-tasks, up to 5 levels), labels, a priority and a description, and can be assigned to the agent itself or nobody.
+2. Proposals appear in a dashed **Proposed** column on the board, and on the linked human's dashboard. The agent can still edit its own proposals (title, description, priority, parent, labels), but cannot start, deliver or close them.
+3. A human owner or member **accepts** a proposal (it moves to To do, or to wherever it's dragged on the board) or **rejects** it (Cancelled). The board has **Accept all**, and a parent's page has **Accept with its sub-tasks**. Accepting a parent does not accept its sub-tasks unless you choose that.
+4. Once accepted, it's a normal task: start it, deliver it with a review kit, and so on.
+
+```bash
+# One task:
+rev task propose -p WEB -t "Greybox Mat" --parent WEB-3 --labels week-2,art --priority medium --assign me
+# A whole plan, all or nothing (up to 100 tasks):
+rev task propose -p WEB --from plan.json
+rev tasks -p WEB          # the project's open tasks as a tree, proposals included
+```
+
+`plan.json` is a JSON array (or `{"tasks": [...]}`) of:
+
+```json
+[
+  { "key": "w1", "title": "Week 1: sim kernel", "priority": "high", "labels": ["week-1"], "assignee": "me" },
+  { "key": "w1.tick", "title": "Deterministic tick", "parent": "w1", "description": "Markdown…", "labels": ["week-1", "sim"] },
+  { "title": "Replay harness", "parent": "w1", "descriptionFile": "docs/replay.md" }
+]
+```
+
+`parent` is the `key` of an earlier item in the same file, or an existing task such as `WEB-3`. Parents must come before their sub-tasks. `descriptionFile` is read relative to the JSON file. `assignee` is `"me"` or left out. Labels are free text (up to 10 per task, no commas); priorities are `none`, `low`, `medium`, `high`, `urgent`.
+
 ## CLI reference
 
 | Command | Purpose |
@@ -125,10 +155,11 @@ The review's owner (your linked human) then approves it and closes the task, or 
 | `rev register --url <url> [--key <key>\|-] [--name <name>] [--repo <dir>] [--force]` | Self-register with an enrollment key and save the token. Keeps an agent already saved on the machine (see [Several agents on one machine](#several-agents-on-one-machine)) |
 | `rev login --url <url> --token <token>` | Verify and save a manually created token |
 | `rev whoami [--all]`, `rev projects` | Identity and project memberships; `--all` lists every agent saved on the machine |
-| `rev tasks [--all-statuses]` | Your open tasks (all statuses with the flag) |
+| `rev tasks [--all-statuses] [-p <KEY>]` | Your open tasks (all statuses with the flag); with `-p`, every task in the project as a tree, proposals included |
+| `rev task propose -p <KEY> (-t <title> [-d <md>\|--description-file <f>] [--parent <ref>] [--labels a,b] [--priority p] [--assign me] \| --from <plan.json>)` | Propose tasks for a human to accept (alias `rev task create`). See [Proposing tasks](#proposing-tasks) |
 | `rev task show <ref> [--save-snapshots <dir>]` | Task with source comments and their mark notes, exact timestamps, a text description of each annotation, and snapshot and frame-sheet downloads |
 | `rev task start <ref>` | Move to `in_progress` |
-| `rev task status <ref> <todo\|in_progress\|in_review\|done\|cancelled>` | Set status. Closing marks the task agent-closed. |
+| `rev task status <ref> <todo\|in_progress\|in_review\|done\|cancelled>` | Set status. Closing marks the task agent-closed. Proposals can't be moved until a human accepts them. |
 | `rev task done <ref> [--note <text>]` | Close it yourself, with a note on what was done and how it was verified |
 | `rev task ready <ref> [--note <text>]` | Hand back for review without a kit (`in_review`) |
 | `rev task comment <ref> <text>` | Progress notes and questions |
@@ -151,8 +182,10 @@ The Claude Code plugin registers this server automatically. Without the plugin, 
 | --- | --- |
 | `whoami`, `list_projects` | Identity and projects |
 | `list_my_tasks` | Assigned tasks |
+| `list_project_tasks` | Every task in a project as a tree of sub-tasks, proposals included |
+| `propose_tasks` | Propose 1–100 tasks (all or none) with keys, parents, labels and priorities; they wait for a human to accept them |
 | `get_task` | Task details plus **images** of the feedback: annotated snapshots and, for video, frame sheets (up to 6) |
-| `update_task_status` | Any status, with an optional note. `done` and `cancelled` are recorded as agent-closed. |
+| `update_task_status` | Any status except Proposed, with an optional note. `done` and `cancelled` are recorded as agent-closed. |
 | `comment_on_task` | Progress notes and questions |
 | `create_review` | Start a new review from local files, optionally linked to a task, published by default |
 | `submit_review_round` | Submit the next round of an existing review: new media, notes, addressed tasks (default: your open tasks from it) |
@@ -169,7 +202,10 @@ Everything the CLI does is plain HTTP with `Authorization: Bearer rev_…`:
 | `GET /api/auth/me` | Who am I |
 | `GET /api/tasks?status=todo,in_progress` | My tasks |
 | `GET /api/tasks/WEB-12` | Task detail, including `sourceComments[].annotation` / `snapshotUrl` / `frames { url, timesMs, markedIndex }`, `sourceMarks` (notes on the marks of those comments), and `closure { by, at, review: "agent" \| "human", reviewedBy }` |
-| `PATCH /api/tasks/WEB-12` `{"status":"in_progress"}` | Status |
+| `PATCH /api/tasks/WEB-12` `{"status":"in_progress"}` | Status. On its own proposals an agent may change `title`, `description`, `priority`, `parent`, `labels` and `assigneeId` (itself or null) instead |
+| `GET /api/projects/WEB/tasks?status=proposed,todo` | Every task in a project; each has `parent`, `labels` and `subtasks { total, done }` |
+| `POST /api/projects/WEB/tasks` `{"title","description","priority","parent","labels","assigneeId"}` | Propose one task (agents; humans create it) |
+| `POST /api/projects/WEB/tasks/bulk` `{"tasks":[{"key","title","parent",…}]}` | Propose up to 100 tasks, all or nothing; `parent` may be an earlier item's `key` |
 | `POST /api/tasks/WEB-12/comments` `{"body":"…"}` | Comment |
 | `POST /api/projects/WEB/reviews` `{"title","description","taskRef"}` | Create a draft review |
 | `POST /api/reviews/WEB-R7/assets?caption=…` | Upload one file (multipart field `file`) |

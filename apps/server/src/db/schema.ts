@@ -194,6 +194,9 @@ export const tasks = pgTable(
       .references(() => users.id),
     /** Review the task was created from (via accepted comments or the review itself). */
     sourceReviewId: uuid("source_review_id").references((): AnyPgColumn => reviews.id, { onDelete: "set null" }),
+    /** The task this is a sub-task of, in the same project. */
+    parentId: uuid("parent_id").references((): AnyPgColumn => tasks.id, { onDelete: "set null" }),
+    labels: jsonb("labels").$type<string[]>().notNull().default([]),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
     /** When the task entered done/cancelled (column predates cancelled closures). */
@@ -209,6 +212,7 @@ export const tasks = pgTable(
     index("tasks_closed_by_idx").on(t.closedBy),
     index("tasks_project_status_idx").on(t.projectId, t.status),
     index("tasks_assignee_idx").on(t.assigneeId),
+    index("tasks_parent_idx").on(t.parentId),
   ],
 );
 

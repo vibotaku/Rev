@@ -2,9 +2,9 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { TASK_STATUS_LABELS, TASK_STATUSES } from "@rev/shared";
+import { ACCEPTED_TASK_STATUSES, TASK_PRIORITIES, TASK_STATUS_LABELS, TASK_STATUSES } from "@rev/shared";
 import type { RevApi } from "./api";
-import { formatReview, formatTask, formatTaskLine } from "./format";
+import { formatReview, formatTask, formatTaskLine, formatTaskTree } from "./format";
 import { assetNamesFor, createReviewKit, fetchSnapshots, snapshotCaption, submitReviewRound } from "./kit";
 import { VERSION } from "./version";
 
@@ -25,9 +25,12 @@ Workflow:
 4. Humans annotate and comment on each round. The review owner accepts or rejects every comment and every mark note
    separately; only accepted ones become tasks for you. Use get_review to read feedback and reply_to_review_comment to
    answer questions (you can reply to a mark note too).
+5. To plan work (e.g. break a design doc into tasks), call propose_tasks: tasks with sub-tasks (parent) and labels.
+   They wait as "proposed" until a human accepts them; you can't start or deliver a proposal, only edit it in Rev.
+   list_project_tasks shows a project's tasks as a tree, proposals included.
 
-Rules: you cannot approve reviews, accept or reject comments, create tasks or assign work; those decisions belong to
-the humans. You may close your own tasks ("done"/"cancelled") when nothing needs a human to look at it; such closures are
+Rules: you cannot approve reviews, accept or reject comments, accept proposals, or assign work to anyone but yourself;
+those decisions belong to the humans. You may close your own tasks ("done"/"cancelled") when nothing needs a human to look at it; such closures are
 shown to humans as agent-closed until one of them reviews it, so leave a note saying what you did and how you verified it.
 Prefer a review kit when there is something visual to check. Keep review titles short and descriptions concrete.`;
 
@@ -74,7 +77,10 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
         if (!projects.length) return text("Not a member of any project yet. Ask your linked human to add you.");
         return text(
           projects
-            .map((p) => `${p.key.padEnd(10)} ${p.name} (role: ${p.myRole}, open tasks: ${p.counts.openTasks})`)
+            .map((p) => {
+              const proposed = p.counts.proposedTasks ? `, proposed: ${p.counts.proposedTasks}` : "";
+              return `${p.key.padEnd(10)} ${p.name} (role: ${p.myRole}, open tasks: ${p.counts.openTasks}${proposed})`;
+            })
             .join("\n"),
         );
       }),
@@ -92,7 +98,70 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
         const api = await getApi();
         const tasks = await api.myTasks(include_closed ? [...TASK_STATUSES] : undefined);
         if (!tasks.length) return text("No tasks assigned to you.");
-        return text(tasks.map(formatTaskLine).join("\n"));
+        return text(tasks.map((t) => formatTaskLine(t)).join("\n"));
+      }),
+  );
+
+  server.registerTool(
+    "list_project_tasks",
+    {
+      description:
+        "List every task in a project, whoever it is assigned to, as a tree of sub-tasks. Includes proposed tasks; use it to find parent refs before propose_tasks.",
+      inputSchema: {
+        project: z.string().describe('Project key such as "WEB"'),
+        include_closed: z.boolean().optional().describe("Also include done and cancelled tasks"),
+      },
+      annotations: readOnly,
+    },
+    ({ project, include_closed }) =>
+      guard(async () => {
+        const api = await getApi();
+        const open = TASK_STATUSES.filter((s) => s !== "done" && s !== "cancelled");
+        const tasks = await api.projectTasks(project, include_closed ? undefined : open);
+        return text(tasks.length ? formatTaskTree(tasks) : `No ${include_closed ? "" : "open "}tasks in ${project}.`);
+      }),
+  );
+
+  server.registerTool(
+    "propose_tasks",
+    {
+      description:
+        "Propose one or more tasks (up to 100, created all or none) in a project you are a member of. They wait as \"proposed\" until a human " +
+        "accepts them (then they are normal tasks: start, deliver with a review, …) or rejects them. Give items a key so later items can " +
+        "name it as their parent; parents must come before their sub-tasks.",
+      inputSchema: {
+        project: z.string().describe('Project key such as "WEB"'),
+        tasks: z
+          .array(
+            z.object({
+              key: z.string().optional().describe("Local name for this item, so later items can use it as parent"),
+              title: z.string().min(1),
+              description: z.string().optional().describe("Markdown: goal, scope, acceptance criteria"),
+              priority: z.enum(TASK_PRIORITIES).optional(),
+              parent: z.string().optional().describe('An existing task ref ("WEB-3") or the key of an earlier item'),
+              labels: z.array(z.string()).max(10).optional(),
+              assign_to_me: z.boolean().optional().describe("Assign it to you (you plan to do it); otherwise unassigned"),
+            }),
+          )
+          .min(1)
+          .max(100),
+      },
+    },
+    ({ project, tasks }) =>
+      guard(async () => {
+        const api = await getApi();
+        const me = tasks.some((t) => t.assign_to_me) ? (await api.me()).user.id : null;
+        const created = await api.proposeTasks(
+          project,
+          tasks.map(({ assign_to_me, ...t }) => ({ ...t, assigneeId: assign_to_me ? me : null })),
+        );
+        const proposed = created.filter((t) => t.status === "proposed").length;
+        return text(
+          `${formatTaskTree(created)}\n\n` +
+            (proposed
+              ? `Proposed ${proposed} task${proposed === 1 ? "" : "s"}. They wait for a human to accept them: ${api.webUrl("tasks", project.toUpperCase())}`
+              : `Created ${created.length} task${created.length === 1 ? "" : "s"}.`),
+        );
       }),
   );
 
@@ -130,7 +199,7 @@ export function createMcpServer(client: RevApi | (() => Promise<RevApi>)) {
         'Move one of your tasks to a new status: "in_progress" when starting; "done"/"cancelled" to close it yourself (flagged as agent-closed until a human reviews it). Submitting a review with task_ref moves it to "in_review" instead. Optionally leave a note.',
       inputSchema: {
         ref: z.string().describe('Task reference such as "WEB-12"'),
-        status: z.enum(TASK_STATUSES),
+        status: z.enum(ACCEPTED_TASK_STATUSES),
         note: z.string().optional().describe("Optional progress note posted on the task"),
       },
     },

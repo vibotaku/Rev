@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useEffect, useEffectEvent, useId, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, Loader2, UserCheck, X } from "lucide-react";
@@ -208,6 +208,7 @@ export function UserChip({ user, size = "sm" }: { user: UserSummary | null; size
 }
 
 const taskStatusStyle: Record<TaskStatus, string> = {
+  proposed: "border border-dashed border-sky-400 bg-sky-50 text-sky-700",
   todo: "bg-zinc-100 text-zinc-700",
   in_progress: "bg-amber-100 text-amber-800",
   in_review: "bg-violet-100 text-violet-800",
@@ -282,5 +283,86 @@ export function PriorityMark({ priority }: { priority: TaskPriority }) {
     <span className={cx("text-xs font-semibold uppercase", priorityStyle[priority])} title={`Priority: ${priority}`}>
       {priority === "urgent" ? "!!!" : priority === "high" ? "!!" : priority === "medium" ? "!" : "low"}
     </span>
+  );
+}
+
+const labelStyles = [
+  "bg-sky-100 text-sky-800",
+  "bg-emerald-100 text-emerald-800",
+  "bg-amber-100 text-amber-800",
+  "bg-rose-100 text-rose-800",
+  "bg-violet-100 text-violet-800",
+  "bg-teal-100 text-teal-800",
+  "bg-orange-100 text-orange-800",
+  "bg-indigo-100 text-indigo-800",
+];
+
+/** A task label; its color follows from its text, so a label looks the same everywhere. */
+export function LabelChip({ label, onRemove }: { label: string; onRemove?: () => void }) {
+  let h = 0;
+  for (const ch of label.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return (
+    <span className={cx("inline-flex max-w-40 items-center gap-0.5 rounded px-1.5 py-px text-[11px] font-medium", labelStyles[h % labelStyles.length])}>
+      <span className="truncate">{label}</span>
+      {onRemove && (
+        <button type="button" onClick={onRemove} className="-mr-0.5 rounded opacity-60 hover:opacity-100" aria-label={`Remove label ${label}`}>
+          <X className="size-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+export function LabelList({ labels, className }: { labels: string[]; className?: string }) {
+  if (!labels.length) return null;
+  return (
+    <span className={cx("flex flex-wrap gap-1", className)}>
+      {labels.map((l) => (
+        <LabelChip key={l} label={l} />
+      ))}
+    </span>
+  );
+}
+
+/** Edits a list of labels: Enter or comma adds what was typed, × removes one. */
+export function LabelInput({ value, onChange, suggestions = [] }: { value: string[]; onChange: (labels: string[]) => void; suggestions?: string[] }) {
+  const id = useId();
+  const [draft, setDraft] = useState("");
+  const add = (raw: string) => {
+    const next = raw.split(",").map((l) => l.trim()).filter(Boolean);
+    const merged = [...value];
+    for (const l of next) if (!merged.some((m) => m.toLowerCase() === l.toLowerCase())) merged.push(l);
+    if (merged.length !== value.length) onChange(merged.slice(0, 10));
+    setDraft("");
+  };
+  return (
+    <div className="flex min-h-9 flex-wrap items-center gap-1 rounded-md border border-zinc-300 bg-white px-2 py-1 shadow-sm focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-100">
+      <input
+        list={`${id}-labels`}
+        value={draft}
+        onChange={(e) => (e.target.value.endsWith(",") ? add(e.target.value) : setDraft(e.target.value))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && draft.trim()) {
+            e.preventDefault();
+            add(draft);
+          } else if (e.key === "Backspace" && !draft && value.length) onChange(value.slice(0, -1));
+        }}
+        onBlur={() => draft.trim() && add(draft)}
+        placeholder={value.length ? "" : "Add labels…"}
+        aria-label="Labels"
+        className="order-last min-w-20 flex-1 bg-transparent py-0.5 text-sm outline-none placeholder:text-zinc-400"
+      />
+      {/* After the input in the DOM: inside a <label>, a click goes to the first control, which must not be a remove button. */}
+      {value.map((l) => (
+        <LabelChip key={l} label={l} onRemove={() => onChange(value.filter((v) => v !== l))} />
+      ))}
+      <datalist id={`${id}-labels`}>
+        {suggestions
+          .filter((s) => !value.some((v) => v.toLowerCase() === s.toLowerCase()))
+          .map((s) => (
+            <option key={s} value={s} />
+          ))}
+      </datalist>
+    </div>
   );
 }

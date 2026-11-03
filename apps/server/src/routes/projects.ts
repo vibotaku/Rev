@@ -26,11 +26,16 @@ export async function describeProjects(
 ): Promise<ProjectInfo[]> {
   if (!rows.length) return [];
   const ids = rows.map((r) => r.project.id);
-  const [taskCounts, reviewCounts, memberCounts] = await Promise.all([
+  const [taskCounts, proposedCounts, reviewCounts, memberCounts] = await Promise.all([
     ctx.db
       .select({ id: tasks.projectId, n: count() })
       .from(tasks)
-      .where(and(inArray(tasks.projectId, ids), notInArray(tasks.status, ["done", "cancelled"])))
+      .where(and(inArray(tasks.projectId, ids), notInArray(tasks.status, ["done", "cancelled", "proposed"])))
+      .groupBy(tasks.projectId),
+    ctx.db
+      .select({ id: tasks.projectId, n: count() })
+      .from(tasks)
+      .where(and(inArray(tasks.projectId, ids), eq(tasks.status, "proposed")))
       .groupBy(tasks.projectId),
     ctx.db
       .select({ id: reviews.projectId, n: count() })
@@ -54,6 +59,7 @@ export async function describeProjects(
     myRole: role,
     counts: {
       openTasks: get(taskCounts, project.id),
+      proposedTasks: get(proposedCounts, project.id),
       openReviews: get(reviewCounts, project.id),
       members: get(memberCounts, project.id),
     },

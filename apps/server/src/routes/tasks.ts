@@ -1,8 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, type SQL } from "drizzle-orm";
 import {
+  MAX_TASK_DEPTH,
   reviewRef,
   TASK_STATUSES,
+  taskBulkCreateBody,
   taskCommentBody,
   taskCreateBody,
   taskUpdateBody,
@@ -17,7 +19,7 @@ import { requireActor, type Actor } from "../lib/auth";
 import { badRequest, conflict, forbidden, parse } from "../lib/errors";
 import { resolveTask } from "../lib/refs";
 import { loadUsers, serializeComments, serializeTasks } from "../lib/serialize";
-import { closureFields, insertTask, syncSourceComments } from "../lib/tasks";
+import { ancestorIds, closureFields, createTasks, findParent, syncSourceComments } from "../lib/tasks";
 
 function statusFilter(raw: string | undefined): TaskStatus[] | null {
   if (!raw) return null;
@@ -28,8 +30,9 @@ function statusFilter(raw: string | undefined): TaskStatus[] | null {
 
 export async function taskDetail(ctx: AppContext, actor: Actor, ref: string): Promise<TaskDetail> {
   const { task, project, role } = await resolveTask(ctx.db, actor, ref);
-  const [[info], commentRows, deliveryRows, activityRows, assignable] = await Promise.all([
+  const [[info], childRows, commentRows, deliveryRows, activityRows, assignable] = await Promise.all([
     serializeTasks(ctx.db, [task]),
+    ctx.db.select().from(tasks).where(eq(tasks.parentId, task.id)).orderBy(asc(tasks.position), asc(tasks.number)),
     ctx.db.select().from(reviewComments).where(eq(reviewComments.taskId, task.id)).orderBy(asc(reviewComments.createdAt)),
     ctx.db
       .select()
@@ -76,6 +79,7 @@ export async function taskDetail(ctx: AppContext, actor: Actor, ref: string): Pr
   const perms = taskPerms(actor, role, task);
   return {
     ...info!,
+    children: await serializeTasks(ctx.db, childRows),
     sourceComments: await serializeComments(ctx.db, commentRows),
     sourceMarks: await serializeComments(ctx.db, markRows),
     deliveries: [
@@ -122,14 +126,25 @@ export default async function taskRoutes(app: FastifyInstance, ctx: AppContext) 
     },
   );
 
+  /** Humans create tasks; agents propose them (status "proposed") for a human to accept. */
   app.post<{ Params: { key: string } }>("/api/projects/:key/tasks", async (req) => {
     const actor = requireActor(req);
     const { project, role } = await loadProject(ctx.db, actor, req.params.key);
-    assertCan(projectPerms(actor, role, project).createTask, "You cannot create tasks in this project");
+    const perms = projectPerms(actor, role, project);
+    assertCan(perms.createTask || perms.proposeTask, "You cannot create tasks in this project");
     const body = parse(taskCreateBody, req.body);
-    await assertAssignable(ctx.db, project.id, actor, role, body.assigneeId);
-    const task = await ctx.db.transaction((tx) => insertTask(tx, project.id, actor, body));
-    return taskDetail(ctx, actor, task.id);
+    const [task] = await createTasks(ctx.db, actor, project, role, [body]);
+    return taskDetail(ctx, actor, task!.id);
+  });
+
+  /** Up to 100 tasks in one go, all or nothing; items can name earlier items as their parent by `key`. */
+  app.post<{ Params: { key: string } }>("/api/projects/:key/tasks/bulk", async (req) => {
+    const actor = requireActor(req);
+    const { project, role } = await loadProject(ctx.db, actor, req.params.key);
+    const perms = projectPerms(actor, role, project);
+    assertCan(perms.createTask || perms.proposeTask, "You cannot create tasks in this project");
+    const body = parse(taskBulkCreateBody, req.body);
+    return serializeTasks(ctx.db, await createTasks(ctx.db, actor, project, role, body.tasks));
   });
 
   /** Cross-project task list. Agents poll this with the default `assignee=me`. */
@@ -171,13 +186,29 @@ export default async function taskRoutes(app: FastifyInstance, ctx: AppContext) 
     const actor = requireActor(req);
     const { task, project, role } = await resolveTask(ctx.db, actor, req.params.ref);
     const perms = taskPerms(actor, role, task);
-    const body = parse(taskUpdateBody, req.body);
-    const onlyStatus = Object.keys(body).every((k) => k === "status");
-    if (!perms.edit && !(onlyStatus && perms.updateStatus)) {
+    const { parent, ...body } = parse(taskUpdateBody, req.body);
+    const fields = Object.keys({ parent, ...body }).filter((k) => (k === "parent" ? parent !== undefined : true));
+    const onlyStatus = fields.every((k) => k === "status");
+    const proposalEdit = perms.editProposal && fields.every((k) => k !== "status" && k !== "position");
+    if (!perms.edit && !(onlyStatus && perms.updateStatus) && !proposalEdit) {
+      if (task.status === "proposed" && actor.kind === "agent") {
+        throw forbidden("This task is still a proposal: a human has to accept it before it can be worked on");
+      }
       throw forbidden(actor.kind === "agent" ? "Agents can only update the status of tasks assigned to them" : undefined);
     }
+    if (body.status === "proposed" && task.status !== "proposed") throw badRequest("A task cannot be moved back to Proposed");
     if (body.assigneeId !== undefined && body.assigneeId !== task.assigneeId) {
-      await assertAssignable(ctx.db, project.id, actor, role, body.assigneeId);
+      if (perms.edit) await assertAssignable(ctx.db, project.id, actor, role, body.assigneeId);
+      else if (body.assigneeId && body.assigneeId !== actor.id) throw forbidden("Agents can only assign their proposals to themselves");
+    }
+    let parentId: string | null | undefined;
+    if (parent === null) parentId = null;
+    else if (parent !== undefined) {
+      const p = await findParent(ctx.db, project, parent);
+      const above = await ancestorIds(ctx.db, p.id);
+      if (p.id === task.id || above.includes(task.id)) throw badRequest(`${parent} is ${p.id === task.id ? "this task" : "one of its sub-tasks"}; that would make a loop`);
+      if (above.length + 2 > MAX_TASK_DEPTH) throw badRequest(`Sub-tasks can be nested at most ${MAX_TASK_DEPTH} levels deep`);
+      parentId = p.id;
     }
 
     await ctx.db.transaction(async (tx) => {
@@ -187,6 +218,7 @@ export default async function taskRoutes(app: FastifyInstance, ctx: AppContext) 
         .update(tasks)
         .set({
           ...body,
+          ...(parentId !== undefined ? { parentId } : {}),
           updatedAt: now,
           ...(statusChanged ? closureFields(actor, body.status!, now) : {}),
         })

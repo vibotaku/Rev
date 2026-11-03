@@ -47,6 +47,11 @@ export function ProjectLayout() {
         <nav className="mt-4 flex gap-5 overflow-x-auto whitespace-nowrap md:gap-6">
           <NavLink to="tasks" className={tab}>
             Tasks <span className="text-zinc-400">{project.counts.openTasks}</span>
+            {project.counts.proposedTasks > 0 && (
+              <span className="ml-1.5 rounded-full border border-dashed border-sky-400 bg-sky-50 px-1.5 text-[11px] text-sky-700" title="Proposed by agents, waiting for a human">
+                {project.counts.proposedTasks} proposed
+              </span>
+            )}
           </NavLink>
           <NavLink to="reviews" className={tab}>
             Reviews <span className="text-zinc-400">{project.counts.openReviews}</span>

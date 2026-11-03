@@ -1,6 +1,6 @@
 ---
 name: workflow
-description: Work through Rev, the team's task and visual-review tracker. Use to pick up tasks assigned to you, read annotated review feedback (video timestamps, mark notes, marked-up snapshots), submit review kits or the next round of a review with screenshots and screen recordings, answer reviewer comments, and close or hand back tasks. Triggers on mentions of Rev, task refs like WEB-12, review refs like WEB-R3, "review kit", or "check my Rev tasks".
+description: Work through Rev, the team's task and visual-review tracker. Use to pick up tasks assigned to you, read annotated review feedback (video timestamps, mark notes, marked-up snapshots), submit review kits or the next round of a review with screenshots and screen recordings, answer reviewer comments, close or hand back tasks, and propose new tasks (a plan with sub-tasks and labels) for humans to accept. Triggers on mentions of Rev, task refs like WEB-12, review refs like WEB-R3, "review kit", or "check my Rev tasks".
 allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/cli/rev.mjs *)
 ---
 
@@ -41,6 +41,15 @@ Use the **Rev MCP tools** from this plugin. If they are unavailable, use the bun
    - Use `reply_to_review_comment` to answer questions or explain decisions; you can reply to an overall comment or to a single mark note. Use `comment_on_review` for general notes.
    - The review owner accepts or rejects every comment and every mark note separately. Only accepted ones come back to you as tasks, so don't act on feedback that is still open or rejected unless a task asks for it.
 
+## Proposing tasks
+
+When the humans ask you to plan work (for example, break a design doc into tasks), propose the tasks instead of keeping the plan in a file:
+
+- Call `propose_tasks` with `project` and `tasks`: up to 100 items, created all or none. Each item has a `title`, a markdown `description` (goal, scope, how to tell it is done), and optionally a `priority` (`none`, `low`, `medium`, `high`, `urgent`), `labels`, `assign_to_me`, a `key`, and a `parent`.
+- Sub-tasks: give the parent a `key` and set `parent` on the sub-tasks to that key (parents first), or to an existing task ref such as `WEB-3`. Use `list_project_tasks` to see what already exists, so you don't propose duplicates.
+- CLI: `rev task propose -p WEB --from plan.json` (a JSON array of `{key, title, description, priority, parent, labels, assignee: "me"}`), or a single task with `-t "…" --parent WEB-3 --labels a,b`.
+- Proposals wait as **Proposed** until a human accepts them (they become normal tasks) or rejects them (cancelled). You can't start, deliver or close a proposal; work on it once it has been accepted and assigned to you. Each task, sub-tasks included, is accepted on its own.
+
 ## Closing tasks
 
 - Prefer handing work back for review (step 5) whenever there is anything visual or judgement-based to check.
@@ -49,7 +58,7 @@ Use the **Rev MCP tools** from this plugin. If they are unavailable, use the bun
 
 ## Rules
 
-- You cannot approve reviews, accept or reject comments, create or assign tasks, or manage projects. Those decisions belong to the humans. Ask in a comment if you need one of them.
+- You cannot approve reviews, accept or reject comments, accept proposals (yours included), assign work to anyone but yourself, or manage projects. Those decisions belong to the humans. Ask in a comment if you need one of them.
 - Work only on tasks assigned to you, and link review kits and rounds only to your own tasks.
 - One draft round at a time per review. If a round submission fails part-way, the tools discard the draft automatically; just retry.
 - Keep review titles short and specific. Put the reasoning in the description, not in the title.

@@ -162,6 +162,7 @@ export default async function reviewRoutes(app: FastifyInstance, ctx: AppContext
     if (body.taskRef) {
       const { task } = await resolveTask(ctx.db, actor, body.taskRef);
       if (task.projectId !== project.id) throw badRequest("The task belongs to a different project");
+      if (task.status === "proposed") throw badRequest(`${body.taskRef} is still a proposal: a human has to accept it first`);
       if (actor.kind === "agent" && task.assigneeId !== actor.id) {
         throw forbidden("Agents can only submit reviews for tasks assigned to them");
       }

@@ -95,7 +95,9 @@ describe("MCP server", () => {
         "get_review",
         "get_task",
         "list_my_tasks",
+        "list_project_tasks",
         "list_projects",
+        "propose_tasks",
         "reply_to_review_comment",
         "submit_review_round",
         "update_task_status",
@@ -415,3 +417,66 @@ describe("review rounds and mark notes", () => {
   });
 });
 
+
+describe("task proposals", () => {
+  const env = () => ({ REV_URL: baseUrl, REV_TOKEN: agentToken, REV_CONFIG: path.join(server.dataDir, "unused.json") });
+
+  beforeAll(async () => {
+    await admin.post("/api/projects", { key: "PLAN", name: "Plan" });
+    await admin.post("/api/projects/PLAN/members", { userId: agentId, role: "member" });
+  });
+
+  it("proposes a plan from a JSON file, and one task from options", async () => {
+    const dir = path.join(server.dataDir, "plan");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "kernel.md"), "Fixed-point **Q16.16** math.");
+    writeFileSync(
+      path.join(dir, "plan.json"),
+      JSON.stringify([
+        { key: "w1", title: "Week 1: sim kernel", priority: "high", labels: ["week-1"] },
+        { key: "w1.tick", title: "Deterministic tick", parent: "w1", labels: "week-1, sim", assignee: "me", descriptionFile: "kernel.md" },
+        { key: "w2", title: "Week 2: greybox", priority: "medium" },
+      ]),
+    );
+    const out = (await cli(["task", "propose", "-p", "plan", "--from", path.join(dir, "plan.json")], env())).out;
+    expect(out).toMatch(/^PLAN-1 +Proposed +\[high\] Week 1: sim kernel  #week-1  \(0\/1 sub-tasks done\)$/m);
+    expect(out).toMatch(/^  PLAN-2 +Proposed +Deterministic tick  #week-1 #sim$/m);
+    expect(out).toContain(`Proposed 3 tasks in PLAN. They wait for a human to accept them: ${baseUrl}/p/PLAN/tasks`);
+    expect((await admin.get("/api/tasks/PLAN-2")).json).toMatchObject({
+      description: "Fixed-point **Q16.16** math.",
+      assignee: { id: agentId },
+      parent: { ref: "PLAN-1" },
+    });
+
+    const one = JSON.parse(
+      (await cli(["--json", "task", "create", "-p", "PLAN", "-t", "Greybox Mat", "--parent", "PLAN-3", "--labels", "week-2,art", "--priority", "low"], env()))
+        .out,
+    );
+    expect(one).toMatchObject([{ ref: "PLAN-4", status: "proposed", parent: { ref: "PLAN-3" }, labels: ["week-2", "art"], priority: "low", assignee: null }]);
+    await expect(cli(["task", "propose", "-p", "PLAN", "-t", "x", "--assign", "bob"], env())).rejects.toThrow('must be "me" or none');
+    await expect(cli(["task", "propose", "-p", "PLAN"], env())).rejects.toThrow("Give either --title");
+    await expect(cli(["task", "start", "PLAN-1"], env())).rejects.toThrow("still a proposal");
+
+    expect((await cli(["tasks", "-p", "PLAN"], env())).out).toMatch(/^PLAN-1 .*\n  PLAN-2 .*\nPLAN-3 .*\n  PLAN-4 /m);
+    const shown = (await cli(["task", "show", "PLAN-1"], env())).out;
+    expect(shown).toContain("This task is a proposal");
+    expect(shown).toContain("Sub-tasks (0/1 done):");
+    expect((await cli(["projects"], env())).out).toContain("Plan (member, 0 open tasks, 4 proposed)");
+  });
+
+  it("proposes over MCP and lists the project as a tree", async () => {
+    const res = await call("propose_tasks", {
+      project: "PLAN",
+      tasks: [{ key: "calls", title: "Calls" }, { title: "Call wheel UI", parent: "calls", labels: ["ui"], assign_to_me: true }],
+    });
+    expect(res.isError).toBeFalsy();
+    expect(textOf(res)).toContain("Proposed 2 tasks. They wait for a human to accept them");
+    expect(textOf(await call("list_project_tasks", { project: "PLAN" }))).toMatch(/^PLAN-5 .*Calls.*\n  PLAN-6 .*Call wheel UI  #ui$/m);
+    const err = await call("propose_tasks", { project: "PLAN", tasks: [{ title: "x", parent: "PLAN-999" }] });
+    expect([err.isError, textOf(err)]).toEqual([true, expect.stringContaining("does not exist")]);
+
+    // Once a human accepts it, it is a normal task.
+    await admin.patch("/api/tasks/PLAN-6", { status: "todo" });
+    expect(textOf(await call("update_task_status", { ref: "PLAN-6", status: "in_progress" }))).toContain("PLAN-6 is now in_progress");
+  });
+});

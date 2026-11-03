@@ -13,9 +13,16 @@ export type DisabledReason = "admin" | "directory";
 export const PROJECT_ROLES = ["owner", "member", "viewer"] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
-export const TASK_STATUSES = ["todo", "in_progress", "in_review", "done", "cancelled"] as const;
+/**
+ * "proposed" is where tasks agents create wait until a human accepts them (into any
+ * other status) or rejects them (cancelled). No task moves back into it.
+ */
+export const TASK_STATUSES = ["proposed", "todo", "in_progress", "in_review", "done", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
+/** The statuses of a task that is not (or no longer) a proposal. */
+export const ACCEPTED_TASK_STATUSES = ["todo", "in_progress", "in_review", "done", "cancelled"] as const satisfies readonly TaskStatus[];
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  proposed: "Proposed",
   todo: "To do",
   in_progress: "In progress",
   in_review: "In review",
@@ -256,12 +263,30 @@ export const projectUpdateBody = z.object({
 export const memberAddBody = z.object({ userId: z.uuid(), role: z.enum(PROJECT_ROLES).default("member") });
 export const memberUpdateBody = z.object({ role: z.enum(PROJECT_ROLES) });
 
+/** Free-form task labels, e.g. "week-1" or "ui". Duplicates (ignoring case) are dropped. */
+export const taskLabels = z
+  .array(z.string().trim().min(1).max(40).regex(/^[^,\n]+$/, "Labels cannot contain commas or line breaks"))
+  .max(10)
+  .transform((ls) => ls.filter((l, i) => ls.findIndex((o) => o.toLowerCase() === l.toLowerCase()) === i));
+export const MAX_TASK_DEPTH = 5;
+
 export const taskCreateBody = z.object({
   title: z.string().trim().min(1).max(300),
   description: markdown.default(""),
-  status: z.enum(TASK_STATUSES).default("todo"),
+  /** Default: "todo" for humans, "proposed" for agents (the only status agents may create). */
+  status: z.enum(TASK_STATUSES).optional(),
   priority: z.enum(TASK_PRIORITIES).default("none"),
   assigneeId: z.uuid().nullable().default(null),
+  /** Parent task in the same project, e.g. "WEB-3". In a bulk create, also the `key` of an earlier item. */
+  parent: z.string().trim().min(1).max(60).nullable().default(null),
+  labels: taskLabels.default([]),
+});
+/** Creates up to 100 tasks at once; `key` names an item so later items can use it as their `parent`. */
+export const taskBulkCreateBody = z.object({
+  tasks: z
+    .array(taskCreateBody.extend({ key: z.string().trim().min(1).max(60).optional() }))
+    .min(1)
+    .max(100),
 });
 export const taskUpdateBody = z.object({
   title: z.string().trim().min(1).max(300).optional(),
@@ -270,6 +295,9 @@ export const taskUpdateBody = z.object({
   priority: z.enum(TASK_PRIORITIES).optional(),
   assigneeId: z.uuid().nullable().optional(),
   position: z.number().finite().optional(),
+  /** Parent task ref in the same project, or null to make it a top-level task. */
+  parent: z.string().trim().min(1).max(40).nullable().optional(),
+  labels: taskLabels.optional(),
 });
 export const taskCommentBody = z.object({ body: z.string().trim().min(1).max(20_000) });
 
@@ -617,8 +645,9 @@ export interface ProjectInfo {
   archived: boolean;
   createdAt: string;
   myRole: ProjectRole | null;
-  counts: { openTasks: number; openReviews: number; members: number };
-  can: { manage: boolean; createTask: boolean; createReview: boolean };
+  counts: { openTasks: number; proposedTasks: number; openReviews: number; members: number };
+  /** createTask: humans create tasks; proposeTask: agents propose them for a human to accept. */
+  can: { manage: boolean; createTask: boolean; proposeTask: boolean; createReview: boolean };
 }
 
 export interface ProjectMemberInfo {
@@ -640,6 +669,10 @@ export interface TaskInfo {
   assignee: UserSummary | null;
   createdBy: UserSummary;
   sourceReview: { id: string; ref: string; title: string } | null;
+  parent: { id: string; ref: string; title: string } | null;
+  labels: string[];
+  /** Direct sub-tasks, not counting cancelled ones. */
+  subtasks: { total: number; done: number };
   createdAt: string;
   updatedAt: string;
   /** Set while the task is done or cancelled. */
@@ -671,9 +704,15 @@ export interface TaskDetail extends TaskInfo {
   sourceMarks: ReviewCommentInfo[];
   /** Reviews (or later rounds of the source review) submitted to deliver this task. */
   deliveries: { id: string; ref: string; title: string; status: ReviewStatus; createdAt: string; round: number | null }[];
+  /** Direct sub-tasks, cancelled ones included. */
+  children: TaskInfo[];
   activity: TaskActivityInfo[];
   can: {
     edit: boolean;
+    /** An agent editing a proposal it made (not its status). */
+    editProposal: boolean;
+    /** Accept (any other status) or reject (cancelled) a proposed task. */
+    decideProposal: boolean;
     updateStatus: boolean;
     comment: boolean;
     /** Mark an agent's closure as reviewed by a human. */
@@ -799,6 +838,8 @@ export interface ReviewDetail extends ReviewInfo {
 
 export interface DashboardInfo {
   myTasks: TaskInfo[];
+  /** Per project you can edit: tasks agents proposed that wait for a human to accept or reject them. */
+  proposals: { projectKey: string; projectName: string; count: number; proposedBy: UserSummary[] }[];
   /** Tasks your agents closed that no human has reviewed yet. */
   agentClosuresToReview: TaskInfo[];
   reviewsToDecide: ReviewInfo[];
