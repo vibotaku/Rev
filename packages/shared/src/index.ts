@@ -15,7 +15,8 @@ export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
 /**
  * "proposed" is where tasks agents create wait until a human accepts them (into any
- * other status) or rejects them (cancelled). No task moves back into it.
+ * other status) or rejects them (cancelled). Only a human undoing that decision moves a
+ * task back into it, and only from To do or Cancelled.
  */
 export const TASK_STATUSES = ["proposed", "todo", "in_progress", "in_review", "done", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];

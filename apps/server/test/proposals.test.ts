@@ -110,10 +110,19 @@ describe("task proposals, sub-tasks and labels", () => {
     expect((await bot.get("/api/tasks")).json.map((t: TaskInfo) => t.ref)).toEqual(["MINI-2"]);
     expect((await bot.patch("/api/tasks/MINI-2", { status: "in_progress" })).json.status).toBe("in_progress");
     expect((await bot.patch("/api/tasks/MINI-2", { title: "Renamed after acceptance" })).status).toBe(403);
-    expect((await alice.patch("/api/tasks/MINI-2", { status: "proposed" })).json.message).toContain("cannot be moved back");
+    // Undo goes back to Proposed only from To do or Cancelled, and only for humans.
+    expect((await alice.patch("/api/tasks/MINI-2", { status: "proposed" })).json.message).toContain("can go back to Proposed");
+    expect((await bot.patch("/api/tasks/MINI-2", { status: "proposed" })).status).toBe(403);
+    const human = await alice.post("/api/projects/MINI/tasks", { title: "Never proposed" });
+    expect((await alice.patch(`/api/tasks/${human.json.ref}`, { status: "proposed" })).json.message).toContain("can go back to Proposed");
+    await alice.patch(`/api/tasks/${human.json.ref}`, { status: "cancelled" });
 
     const rejected = await bob.patch("/api/tasks/MINI-4", { status: "cancelled" });
     expect(rejected.json).toMatchObject({ status: "cancelled", closure: { review: "human", by: { id: bobId } } });
+    const undone = await bob.patch("/api/tasks/MINI-4", { status: "proposed" });
+    expect(undone.json).toMatchObject({ status: "proposed", closure: null, can: { decideProposal: true } });
+    expect(undone.json.activity.at(-1)).toMatchObject({ kind: "status", data: { from: "cancelled", to: "proposed" } });
+    await bob.patch("/api/tasks/MINI-4", { status: "cancelled" });
     expect(((await bob.get("/api/tasks/MINI-1")).json as TaskDetail).subtasks).toEqual({ total: 2, done: 0 });
   });
 

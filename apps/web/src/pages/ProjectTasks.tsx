@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, Columns3, Lightbulb, List, ListTree, Plus, Search, UserCheck, X } from "lucide-react";
+import { Bot, Check, Columns3, Lightbulb, List, ListTree, Plus, Search, Undo2, UserCheck, X } from "lucide-react";
 import { Link, useOutletContext } from "react-router";
 import {
   TASK_PRIORITIES,
@@ -31,6 +31,7 @@ import {
   PageLoader,
   PriorityMark,
   Select,
+  Spinner,
   Textarea,
 } from "../components/ui";
 import { cx, taskPath } from "../lib";
@@ -77,6 +78,96 @@ export function useDecideProposals(key: string) {
   });
 }
 
+/** How long a decided proposal stays on the board, once saved and the pointer has left the column. */
+const LINGER_MS = 5000;
+
+type Decision = {
+  to: "todo" | "cancelled";
+  state: "saving" | "saved" | "undoing";
+  /** When it was saved (or started saving). */
+  at: number;
+  /** The card as it was when decided, so it keeps its size while it stays. */
+  task: TaskInfo;
+};
+
+/**
+ * Accepting and rejecting proposals on the board. A decided card stays where it was, showing
+ * the outcome and Undo, so nothing moves under the pointer between quick clicks. It leaves
+ * LINGER_MS after the decision is saved, and never while the pointer is over the column.
+ */
+function useBoardDecisions(projectKey: string) {
+  const qc = useQueryClient();
+  const [decisions, setDecisions] = useState<Record<string, Decision>>({});
+  const [error, setError] = useState<unknown>(null);
+  const [holding, setHolding] = useState(false);
+
+  const change = (ref: string, next: (d: Decision) => Decision | null) =>
+    setDecisions((all) => {
+      const d = all[ref];
+      if (!d) return all;
+      const { [ref]: _, ...rest } = all;
+      const n = next(d);
+      return n ? { ...rest, [ref]: n } : rest;
+    });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["tasks", projectKey] });
+    qc.invalidateQueries({ queryKey: ["task"] });
+    qc.invalidateQueries({ queryKey: ["project", projectKey] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+
+  async function decide(tasks: TaskInfo[], to: Decision["to"]) {
+    setError(null);
+    const at = Date.now();
+    setDecisions((all) => ({ ...all, ...Object.fromEntries(tasks.map((t) => [t.ref, { to, state: "saving", at, task: t } satisfies Decision])) }));
+    for (const t of tasks) {
+      try {
+        await api.patch(`/api/tasks/${t.ref}`, { status: to });
+        change(t.ref, (d) => ({ ...d, state: "saved", at: Date.now() }));
+      } catch (e) {
+        setError(e);
+        change(t.ref, () => null);
+      }
+    }
+    refresh();
+  }
+
+  async function undo(refs: string[]) {
+    setError(null);
+    for (const ref of refs) change(ref, (d) => ({ ...d, state: "undoing" }));
+    for (const ref of refs) {
+      try {
+        await api.patch(`/api/tasks/${ref}`, { status: "proposed" });
+        // Back to the card it was, before the refetch lands.
+        setDecisions((all) => {
+          const d = all[ref];
+          if (d) qc.setQueryData<TaskInfo[]>(["tasks", projectKey], (old) => old?.map((t) => (t.ref === ref ? d.task : t)));
+          const { [ref]: _, ...rest } = all;
+          return rest;
+        });
+      } catch (e) {
+        setError(e);
+        change(ref, (d) => ({ ...d, state: "saved", at: Date.now() }));
+      }
+    }
+    refresh();
+  }
+
+  useEffect(() => {
+    if (holding) return;
+    const saved = Object.values(decisions).filter((d) => d.state === "saved");
+    if (!saved.length) return;
+    const wait = Math.max(0, Math.min(...saved.map((d) => d.at)) + LINGER_MS - Date.now());
+    const timer = setTimeout(
+      () => setDecisions((all) => Object.fromEntries(Object.entries(all).filter(([, d]) => d.state !== "saved" || Date.now() - d.at < LINGER_MS))),
+      wait,
+    );
+    return () => clearTimeout(timer);
+  }, [decisions, holding]);
+
+  return { decisions, decide, undo, error, setHolding };
+}
+
 export function ProjectTasks() {
   const project = useOutletContext<ProjectInfo>();
   const me = useUser();
@@ -106,7 +197,8 @@ export function ProjectTasks() {
       qc.invalidateQueries({ queryKey: ["project", project.key] });
     },
   });
-  const decide = useDecideProposals(project.key);
+  const board = useBoardDecisions(project.key);
+  const { decisions } = board;
 
   const labels = useMemo(() => labelsOf(tasks), [tasks]);
   const filtered = useMemo(() => {
@@ -146,7 +238,12 @@ export function ProjectTasks() {
     move.mutate({ ref, status, position });
   }
 
-  const hasProposals = (tasks ?? []).some((t) => t.status === "proposed");
+  const hasProposals = (tasks ?? []).some((t) => t.status === "proposed") || Object.keys(decisions).length > 0;
+  // Decided proposals stay in the Proposed column (as they were) until they leave; then they show in their new column.
+  const columnTasks = (status: TaskStatus) =>
+    status === "proposed"
+      ? filtered.filter((t) => t.status === "proposed" || decisions[t.ref]).map((t) => decisions[t.ref]?.task ?? t)
+      : filtered.filter((t) => t.status === status && !decisions[t.ref]);
   const columns: TaskStatus[] = [...(hasProposals ? (["proposed"] as const) : []), ...BOARD, ...(showCancelled ? (["cancelled"] as const) : [])];
 
   return (
@@ -195,7 +292,7 @@ export function ProjectTasks() {
           </Button>
         )}
       </div>
-      <ErrorBox error={error ?? move.error ?? decide.error} />
+      <ErrorBox error={error ?? move.error ?? board.error} />
       {isLoading ? (
         <PageLoader />
       ) : !tasks?.length ? (
@@ -207,9 +304,11 @@ export function ProjectTasks() {
       ) : view === "board" ? (
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-4 pb-6 max-md:snap-x max-md:scroll-px-4 md:px-8">
           {columns.map((status) => {
-            const column = filtered.filter((t) => t.status === status);
+            const column = columnTasks(status);
             const unreviewed = column.filter((t) => t.closure?.review === "agent").length;
             const proposals = status === "proposed";
+            const undecided = proposals ? column.filter((t) => !decisions[t.ref]) : [];
+            const undoable = proposals ? column.filter((t) => decisions[t.ref]?.state === "saved").map((t) => t.ref) : [];
             return (
               <div
                 key={status}
@@ -221,6 +320,8 @@ export function ProjectTasks() {
                 )}
                 onDragOver={(e) => canDropIn(status) && e.preventDefault()}
                 onDrop={() => drop(status, null)}
+                onPointerEnter={proposals ? () => board.setHolding(true) : undefined}
+                onPointerLeave={proposals ? () => board.setHolding(false) : undefined}
               >
                 <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs font-semibold text-zinc-600">
                   <span className={cx("flex items-center gap-1", proposals && "text-sky-800")} title={proposals ? "Tasks agents proposed. Accept them to add them to the board." : undefined}>
@@ -236,27 +337,33 @@ export function ProjectTasks() {
                         <Bot className="size-3" /> {unreviewed} to review
                       </span>
                     )}
-                    {proposals && canEdit && column.length > 1 && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-1.5 text-[11px] text-sky-800 hover:bg-sky-100"
-                        loading={decide.isPending && decide.variables?.refs.length === column.length}
-                        disabled={decide.isPending}
-                        onClick={() => decide.mutate({ refs: column.map((t) => t.ref), status: "todo" })}
-                        title="Accept every proposal shown here into To do"
-                      >
-                        <Check className="size-3" /> Accept all
-                      </Button>
-                    )}
-                    <span className="text-zinc-400">{column.length}</span>
+                    <span className="text-zinc-400">{proposals ? undecided.length : column.length}</span>
                   </span>
                 </div>
+                {proposals && canEdit && (
+                  // Always there (buttons disable instead of disappearing), so the cards below never jump.
+                  <div className="flex gap-1.5 px-2 pb-2">
+                    <Button
+                      size="sm"
+                      className="flex-1 border-sky-300 text-sky-800 hover:bg-sky-100"
+                      disabled={!undecided.length}
+                      onClick={() => board.decide(undecided, "todo")}
+                      title="Accept every proposal shown here into To do"
+                    >
+                      <Check className="size-3.5" /> Accept all{undecided.length ? ` ${undecided.length}` : ""}
+                    </Button>
+                    {undoable.length > 1 && (
+                      <Button size="sm" className="border-sky-300 text-sky-800 hover:bg-sky-100" onClick={() => board.undo(undoable)} title="Put these back in Proposed">
+                        <Undo2 className="size-3.5" /> Undo {undoable.length}
+                      </Button>
+                    )}
+                  </div>
+                )}
                 <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
                   {column.map((t) => (
                     <div
                       key={t.id}
-                      draggable={canEdit}
+                      draggable={canEdit && !decisions[t.ref]}
                       onDragStart={() => setDragging(t.id)}
                       onDragEnd={() => setDragging(null)}
                       onDragOver={(e) => canDropIn(status) && e.preventDefault()}
@@ -269,8 +376,9 @@ export function ProjectTasks() {
                       <TaskCard
                         task={t}
                         canDecide={canEdit}
-                        deciding={decide.isPending && !!decide.variables?.refs.includes(t.ref)}
-                        onDecide={(to) => decide.mutate({ refs: [t.ref], status: to })}
+                        decision={decisions[t.ref]}
+                        onDecide={(to) => board.decide([t], to)}
+                        onUndo={() => board.undo([t.ref])}
                       />
                     </div>
                   ))}
@@ -299,20 +407,24 @@ export function ProjectTasks() {
 function TaskCard({
   task: t,
   canDecide,
-  deciding,
+  decision,
   onDecide,
+  onUndo,
 }: {
   task: TaskInfo;
   canDecide: boolean;
-  deciding: boolean;
-  onDecide: (status: TaskStatus) => void;
+  decision?: Decision;
+  onDecide: (status: Decision["to"]) => void;
+  onUndo: () => void;
 }) {
   const proposed = t.status === "proposed";
+  const accepted = decision?.to === "todo";
   return (
     <div
       data-task={t.ref}
+      data-decision={decision?.state}
       className={cx(
-        "rounded-md border shadow-sm",
+        "relative rounded-md border shadow-sm",
         proposed
           ? "border-dashed border-sky-400 bg-white hover:border-sky-500"
           : t.closure?.review === "agent"
@@ -363,12 +475,38 @@ function TaskCard({
       </Link>
       {proposed && canDecide && (
         <div className="flex gap-1 border-t border-dashed border-sky-200 p-1">
-          <Button size="sm" variant="ghost" className="flex-1 text-emerald-700 hover:bg-emerald-50" disabled={deciding} onClick={() => onDecide("todo")}>
+          <Button size="sm" variant="ghost" className="flex-1 text-emerald-700 hover:bg-emerald-50" disabled={!!decision} onClick={() => onDecide("todo")}>
             <Check className="size-3.5" /> Accept
           </Button>
-          <Button size="sm" variant="ghost" className="flex-1 text-zinc-500" disabled={deciding} onClick={() => onDecide("cancelled")}>
+          <Button size="sm" variant="ghost" className="flex-1 text-zinc-500" disabled={!!decision} onClick={() => onDecide("cancelled")}>
             <X className="size-3.5" /> Reject
           </Button>
+        </div>
+      )}
+      {decision && (
+        // Covers the card, same size, so a second click here can't land on another card.
+        <div
+          className={cx(
+            "absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-md text-sm font-medium",
+            accepted ? "bg-emerald-50/95 text-emerald-800" : "bg-zinc-50/95 text-zinc-600",
+          )}
+        >
+          {decision.state === "saved" ? (
+            <>
+              <span className="flex items-center gap-1.5">
+                {accepted ? <Check className="size-4" /> : <X className="size-4" />}
+                {t.ref} {accepted ? "accepted → To do" : "rejected"}
+              </span>
+              <Button size="sm" onClick={onUndo}>
+                <Undo2 className="size-3.5" /> Undo
+              </Button>
+            </>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <Spinner className="size-4" />
+              {decision.state === "undoing" ? "Undoing…" : accepted ? "Accepting…" : "Rejecting…"}
+            </span>
+          )}
         </div>
       )}
     </div>

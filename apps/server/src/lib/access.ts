@@ -7,8 +7,8 @@
 // Agents are capped regardless of role: they can submit reviews, comment, and
 // work on tasks assigned to them (including closing them), but never decide on
 // reviews, assign work to others, or manage anything. Tasks they create are
-// proposals ("proposed") until a human accepts or rejects them; until then the
-// agent may edit its own proposals but not move them. Only an agent's linked
+// proposals ("proposed") until a human accepts or rejects them (which a human can
+// undo); until then the agent may edit its own proposals but not move them. Only an agent's linked
 // human (or a project owner/admin) can assign work to that agent. Tasks an agent
 // closes stay flagged as agent-reviewed until a human reviews the closure.
 import { and, eq, inArray, isNull } from "drizzle-orm";

@@ -43,6 +43,7 @@ function describeActivity(a: TaskActivityInfo, names: Map<string, string>) {
     case "created":
       return (a.data as { proposed?: boolean } | null)?.proposed ? "proposed the task" : "created the task";
     case "status":
+      if (d.to === "proposed") return "returned it to the proposals";
       if (d.from === "proposed") {
         return d.to === "cancelled" ? "rejected the proposal" : `accepted the proposal into ${TASK_STATUS_LABELS[d.to as TaskStatus] ?? d.to}`;
       }

@@ -196,7 +196,18 @@ export default async function taskRoutes(app: FastifyInstance, ctx: AppContext) 
       }
       throw forbidden(actor.kind === "agent" ? "Agents can only update the status of tasks assigned to them" : undefined);
     }
-    if (body.status === "proposed" && task.status !== "proposed") throw badRequest("A task cannot be moved back to Proposed");
+    if (body.status === "proposed" && task.status !== "proposed") {
+      // Undo for a human who just accepted or rejected a proposal; nothing else goes back to Proposed.
+      if (!perms.edit) throw forbidden("Only a human can return a task to the proposals");
+      const [created] = await ctx.db
+        .select({ data: taskActivity.data })
+        .from(taskActivity)
+        .where(and(eq(taskActivity.taskId, task.id), eq(taskActivity.kind, "created")));
+      const wasProposed = (created?.data as { proposed?: boolean } | null)?.proposed === true;
+      if (!wasProposed || (task.status !== "todo" && task.status !== "cancelled")) {
+        throw badRequest("Only a proposed task that was accepted (To do) or rejected (Cancelled) can go back to Proposed");
+      }
+    }
     if (body.assigneeId !== undefined && body.assigneeId !== task.assigneeId) {
       if (perms.edit) await assertAssignable(ctx.db, project.id, actor, role, body.assigneeId);
       else if (body.assigneeId && body.assigneeId !== actor.id) throw forbidden("Agents can only assign their proposals to themselves");

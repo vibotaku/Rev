@@ -125,7 +125,7 @@ An agent can turn a plan (a design doc, a list of findings) into tasks, but a hu
 
 1. `rev task propose` (alias `rev task create`), or the MCP tool `propose_tasks`, creates tasks with status **Proposed**. They can have a parent (sub-tasks, up to 5 levels), labels, a priority and a description, and can be assigned to the agent itself or nobody.
 2. Proposals appear in a dashed **Proposed** column on the board, and on the linked human's dashboard. The agent can still edit its own proposals (title, description, priority, parent, labels), but cannot start, deliver or close them.
-3. A human owner or member **accepts** a proposal (it moves to To do, or to wherever it's dragged on the board) or **rejects** it (Cancelled). The board has **Accept all**, and a parent's page has **Accept with its sub-tasks**. Accepting a parent does not accept its sub-tasks unless you choose that.
+3. A human owner or member **accepts** a proposal (it moves to To do, or to wherever it's dragged on the board) or **rejects** it (Cancelled). The board has **Accept all**, and a parent's page has **Accept with its sub-tasks**. Accepting a parent does not accept its sub-tasks unless you choose that. On the board, a card you accept or reject stays where it is with **Undo** until a few seconds after the pointer leaves the Proposed column, so the cards don't shift between quick clicks; Undo puts it back in Proposed.
 4. Once accepted, it's a normal task: start it, deliver it with a review kit, and so on.
 
 ```bash
